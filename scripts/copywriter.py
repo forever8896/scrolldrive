@@ -144,7 +144,7 @@ def llm(model, messages, max_tokens=2500):
         body["response_format"] = {"type": "json_object"}
     req = urllib.request.Request(
         director.SHROUD, data=json.dumps(body).encode(), method="POST",
-        headers={"Authorization": f"Bearer {x402pay.agent_token()}", "X-Shroud-Provider": "openrouter",
+        headers={**x402pay.auth_headers(), "X-Shroud-Provider": "openrouter",
                  "Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=180) as r:
         text = json.loads(r.read())["choices"][0]["message"].get("content") or ""

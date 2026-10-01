@@ -67,6 +67,15 @@ def agent_token():
     return tok
 
 
+def auth_headers():
+    """Headers that authenticate as the studio agent. On a 1Claw runtime the token is bound to
+    that runtime, and 1Claw requires the runtime's id alongside it."""
+    h = {"Authorization": f"Bearer {agent_token()}"}
+    if os.environ.get("ONECLAW_RUNTIME_ID"):
+        h["X-1Claw-Runtime-Id"] = os.environ["ONECLAW_RUNTIME_ID"]
+    return h
+
+
 def post(url, body, headers=None, timeout=600):
     h = {"Content-Type": "application/json"}
     h.update(headers or {})
@@ -115,7 +124,7 @@ def quote(url, body):
 def agent_sign(body):
     """Ask 1Claw to sign with the studio agent's key (the key never leaves 1Claw)."""
     s, _, raw = post(f"{API}/v1/agents/{AGENT_ID}/sign", body,
-                     {"Authorization": f"Bearer {agent_token()}"}, timeout=60)
+                     auth_headers(), timeout=60)
     signed = json.loads(raw or b"{}")
     if s >= 300 or "signature" not in signed:
         raise Refused(f"1Claw refused to sign ({s}): {raw[:500]!r}")
@@ -223,7 +232,7 @@ def pay(url, body, label=None):
     s, _, sraw = post(
         f"{API}/v1/agents/{AGENT_ID}/sign",
         {"intent_type": "typed_data", "chain": "base", "typed_data": typed_data},
-        {"Authorization": f"Bearer {agent_token()}"},
+        auth_headers(),
         timeout=60,
     )
     signed = json.loads(sraw or b"{}")

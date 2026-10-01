@@ -114,8 +114,8 @@ def ask_llm(model, content, use_router_key=False, max_tokens=5000, _retry=True):
             "response_format": {"type": "json_object"}, "max_tokens": max_tokens, "temperature": 0.8}
     req = urllib.request.Request(
         SHROUD, data=json.dumps(body).encode(), method="POST",
-        headers={"Authorization": f"Bearer {shroud_bearer(use_router_key)}", "X-Shroud-Provider": "openrouter",
-                 "Content-Type": "application/json"})
+        headers={**({"Authorization": f"Bearer {router_key()}"} if use_router_key else x402pay.auth_headers()),
+                 "X-Shroud-Provider": "openrouter", "Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=240) as r:
             resp = json.loads(r.read())

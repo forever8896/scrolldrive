@@ -83,7 +83,7 @@ def balance():
 
 def _oneclaw(path, body):
     s, _, raw = x402pay.post(f"{x402pay.API}/v1/agents/{x402pay.AGENT_ID}{path}", body,
-                             {"Authorization": f"Bearer {x402pay.agent_token()}"}, timeout=60)
+                             x402pay.auth_headers(), timeout=60)
     d = _json(raw) or {}
     if s >= 300:
         raise VeniceError(f"1claw pay{path} -> {s}: {raw[:400]!r}")

@@ -61,7 +61,7 @@ def ask(content):
             "response_format": {"type": "json_object"}, "max_tokens": 3000, "temperature": 0.5}
     req = urllib.request.Request(
         director.SHROUD, data=json.dumps(body).encode(), method="POST",
-        headers={"Authorization": f"Bearer {x402pay.agent_token()}", "X-Shroud-Provider": "openrouter",
+        headers={**x402pay.auth_headers(), "X-Shroud-Provider": "openrouter",
                  "Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=180) as r:
         text = json.loads(r.read())["choices"][0]["message"].get("content") or ""

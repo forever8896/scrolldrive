@@ -79,7 +79,7 @@ def ask(text, images=()):
     for _ in range(2):
         req = urllib.request.Request(
             director.SHROUD, data=json.dumps(body).encode(), method="POST",
-            headers={"Authorization": f"Bearer {x402pay.agent_token()}", "X-Shroud-Provider": "openrouter",
+            headers={**x402pay.auth_headers(), "X-Shroud-Provider": "openrouter",
                      "Content-Type": "application/json"})
         try:
             with urllib.request.urlopen(req, timeout=120) as r:

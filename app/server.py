@@ -323,11 +323,11 @@ def status():
         with urllib.request.urlopen(req, timeout=15) as r:
             out["wallet_usdc"] = round(int(json.loads(r.read())["result"], 16) / 1e6, 2)
     except Exception as e:  # noqa: BLE001
-        out["wallet_error"] = str(e)[:120]
+        out["wallet_error"] = str(e)[:400]
     try:
         out["venice_usd"] = round(float(venice.balance()["data"]["balanceUsd"]), 2)
     except Exception as e:  # noqa: BLE001
-        out["venice_error"] = str(e)[:120]
+        out["venice_error"] = str(e)[:400]
     return out
 
 
