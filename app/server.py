@@ -292,8 +292,10 @@ def board_view(name):
     for a, b in zip(cfg["keyframes"], cfg["keyframes"][1:]):
         key = f"{a['id']}-{b['id']}"
         clip = os.path.join(rd, f"clip-{key}.mp4")
+        # Current unless a still was reshot after the clip. The minute of slack keeps files that
+        # arrive together (a fresh git clone on the runtime) from looking out of date.
         fresh = os.path.exists(clip) and mt[a["id"]] and mt[b["id"]] and \
-            os.path.getmtime(clip) > max(mt[a["id"]], mt[b["id"]])
+            os.path.getmtime(clip) + 60 >= max(mt[a["id"]], mt[b["id"]])
         moves.append({"id": key, "from": a["id"], "to": b["id"], "prompt": cfg["transitions"].get(key, ""),
                       "url": f"{run_url(clip)}?v={int(os.path.getmtime(clip))}" if fresh else None,
                       "lands": joins.get(key, {}).get("lands_on_end_frame") if fresh else None})
