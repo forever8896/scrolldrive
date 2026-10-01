@@ -359,7 +359,9 @@ function priceFor(scenes, res) {
   if (!prices) return null;
   const img = prices.image_usd * (scenes + 1);
   const film = prices.clip_usd[res] * scenes;
-  return { price: prices.build_fee_usd + prices.per_scene_usd * scenes, cost: img + film, img, film };
+  // Same rule as the server: a small fee plus a multiple of the render cost, rounded up to $0.50.
+  const price = Math.ceil((prices.fee_usd + prices.multiplier * (img + film)) * 2) / 2;
+  return { price, cost: img + film, img, film };
 }
 
 function updatePrice() {

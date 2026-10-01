@@ -124,7 +124,7 @@ def prices():
         PRICES.update({
             "image_usd": scrollsite.image_price(scrollsite.EDIT_MODEL),
             "clip_usd": {r: venice.video_quote(scrollsite.DEFAULT_VIDEO_MODEL, "5s", r) for r in ("768P", "1080P")},
-            "build_fee_usd": director.BUILD_FEE_USD, "per_scene_usd": director.PER_SCENE_USD, "at": time.time()})
+            "fee_usd": director.PRICE_FEE_USD, "multiplier": director.PRICE_MULTIPLIER, "at": time.time()})
     return {k: v for k, v in PRICES.items() if k != "at"}
 
 
@@ -141,7 +141,9 @@ def price_usd(s):
     if not s.get("name") or not os.path.exists(cfg_path(s["name"])):
         return None
     n = len(load_cfg(s["name"])["keyframes"])
-    return director.BUILD_FEE_USD + director.PER_SCENE_USD * (n - 1)
+    cfg = load_cfg(s["name"])
+    p = prices()
+    return director.studio_price(n * p["image_usd"] + (n - 1) * p["clip_usd"][cfg["video"].get("resolution", "768P")])
 
 
 def is_paid(s):
@@ -269,7 +271,7 @@ def board_view(name):
         "keyframes": kfs, "moves": moves, "resolution": res,
         "cost": {"keyframes_usd": round(n * p["image_usd"], 2), "film_usd": round((n - 1) * p["clip_usd"][res], 2),
                  "image_usd": p["image_usd"], "clip_usd": p["clip_usd"][res]},
-        "price_usd": director.BUILD_FEE_USD + director.PER_SCENE_USD * (n - 1),
+        "price_usd": director.studio_price(n * p["image_usd"] + (n - 1) * p["clip_usd"][res]),
         "site": f"{run_url(site)}?v={int(os.path.getmtime(site))}" if os.path.exists(site) else None,
         "zip": run_url(zip_path) if os.path.exists(zip_path) else None,
     }

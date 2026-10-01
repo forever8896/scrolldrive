@@ -17,6 +17,7 @@ Then: python3 scripts/scrollsite.py configs/<name>.json [--yes --stage keyframes
 import argparse
 import base64
 import json
+import math
 import os
 import re
 import sys
@@ -33,7 +34,14 @@ DEFAULT_MODEL = "xiaomi/mimo-v2.6-flash"
 # X-Shroud-Provider. For such models we ask for OpenRouter explicitly via "openrouter/...".
 SHROUD_PROVIDER_PREFIXES = ("openai/", "anthropic/", "google/", "mistral/", "cohere/")
 MIN_SCENES, MAX_SCENES = 2, 6          # scenes = camera moves = keyframes - 1
-BUILD_FEE_USD, PER_SCENE_USD = 29.0, 8.0  # studio price to a customer; costs are quoted live
+# Price to a customer: a small fee plus a multiple of the live render cost, rounded up to $0.50.
+# A run may spend up to twice its quote on redos, so a multiple of 2.5 never loses money.
+PRICE_FEE_USD = float(os.environ.get("PRICE_FEE_USD", 1.0))
+PRICE_MULTIPLIER = float(os.environ.get("PRICE_MULTIPLIER", 2.5))
+
+
+def studio_price(render_cost_usd):
+    return math.ceil((PRICE_FEE_USD + PRICE_MULTIPLIER * render_cost_usd) * 2) / 2
 ROOT = x402pay.ROOT
 
 TYPES = {
@@ -204,7 +212,7 @@ def direct(name, brief, refs=(), ptype="product", style="", scenes=3, resolution
     }
     costs = scrollsite.plan(cfg, quiet=True)
     cfg["budget_usd"] = round(max(2.0, costs["total_usd"] * 2.0), 2)  # headroom for redos
-    price = BUILD_FEE_USD + PER_SCENE_USD * (len(keyframes) - 1)
+    price = studio_price(costs["total_usd"])
     os.makedirs(os.path.join(ROOT, "configs"), exist_ok=True)
     path = os.path.join(ROOT, "configs", f"{name}.json")
     json.dump(cfg, open(path, "w"), indent=2)
