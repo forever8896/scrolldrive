@@ -1,0 +1,62 @@
+/* Frameline text layer: the lines that play over a scroll film.
+   One style per site (data-preset on the stage), and per line a position on a 3x3 grid,
+   a size and an entrance. Shared by every generated site and the Frameline landing page. */
+.fl-stage { position: absolute; inset: 0; z-index: 3; pointer-events: none; --gx: clamp(20px, 6vw, 88px); --gy: clamp(84px, 13vh, 150px); }
+.fl-beat {
+  position: absolute; pointer-events: auto; color: inherit; opacity: 0; max-width: var(--mw, 18ch);
+  font-size: calc(var(--fs) * var(--k, 1)); line-height: 1.06; letter-spacing: -0.02em; white-space: pre-line; text-wrap: balance;
+  transition: opacity .6s cubic-bezier(.16,1,.3,1), transform .9s cubic-bezier(.16,1,.3,1), filter .7s cubic-bezier(.16,1,.3,1), clip-path 1s cubic-bezier(.16,1,.3,1);
+}
+.fl-text { outline: none; }
+
+/* Position: rows t / m / b, columns l / c / r ("c" alone is dead centre). */
+.fl-beat[data-pos^="t"] { top: var(--gy); }
+.fl-beat[data-pos^="b"] { bottom: var(--gy); }
+.fl-beat[data-pos="ml"], .fl-beat[data-pos="mr"], .fl-beat[data-pos="c"] { top: 50%; translate: 0 -50%; }
+.fl-beat[data-pos$="l"] { left: var(--gx); text-align: left; }
+.fl-beat[data-pos$="r"] { right: var(--gx); text-align: right; }
+.fl-beat[data-pos="tc"], .fl-beat[data-pos="bc"] { left: 50%; translate: -50% 0; text-align: center; }
+.fl-beat[data-pos="c"] { left: 50%; translate: -50% -50%; text-align: center; }
+
+/* Size */
+.fl-beat[data-size="s"] { --fs: clamp(16px, 1.45vw, 22px); --mw: 30ch; }
+.fl-beat[data-size="m"] { --fs: clamp(26px, 3.1vw, 46px); --mw: 18ch; }
+.fl-beat[data-size="l"] { --fs: clamp(34px, 4.8vw, 74px); --mw: 14ch; }
+.fl-beat[data-size="xl"] { --fs: clamp(44px, 7.6vw, 124px); --mw: 11ch; }
+
+/* Entrance */
+.fl-beat[data-enter="rise"] { transform: translateY(22px); }
+.fl-beat[data-enter="blur"] { filter: blur(14px); transform: scale(1.03); }
+.fl-beat[data-enter="wipe"] { clip-path: inset(-20% 100% -20% 0); }
+.fl-beat[data-enter="wipe"][data-pos$="r"] { clip-path: inset(-20% 0 -20% 100%); }
+.fl-beat[data-enter="wipe"].on { clip-path: inset(-20% -4% -20% -4%); }
+/* Shown: after the entrance rules and more specific than them, so every entrance resolves. */
+.fl-beat.on[data-enter] { opacity: 1; transform: none; filter: none; }
+
+/* Styles */
+[data-preset="cinema"] .fl-beat { font-weight: 500; text-shadow: 0 2px 28px rgb(0 0 0 / .45); }
+[data-preset="editorial"] .fl-beat { font-weight: 400; letter-spacing: -0.035em; line-height: 1.02; text-shadow: 0 2px 24px rgb(0 0 0 / .35); }
+[data-preset="editorial"] .fl-beat::before {
+  content: attr(data-index); display: block; margin-bottom: 1em; font: 500 11px/1 ui-monospace, "SFMono-Regular", Menlo, monospace;
+  letter-spacing: .14em; opacity: .7; text-shadow: none;
+}
+[data-preset="gallery"] .fl-beat {
+  --k: .62; --mw: 32ch; font-weight: 400; line-height: 1.35; letter-spacing: 0; padding: 14px 18px 16px;
+  background: color-mix(in srgb, var(--bg, #0b0b0c) 80%, transparent); border-left: 2px solid var(--accent, currentColor);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); text-align: left !important;
+}
+[data-preset="gallery"] .fl-beat::before {
+  content: "N\BA  " attr(data-n); display: block; margin-bottom: .7em; font: 500 11px/1 ui-monospace, "SFMono-Regular", Menlo, monospace;
+  letter-spacing: .12em; opacity: .65;
+}
+[data-preset="poster"] .fl-beat { --k: 1.18; font-weight: 700; text-transform: uppercase; letter-spacing: -0.045em; line-height: .9; text-shadow: 0 4px 40px rgb(0 0 0 / .4); }
+[data-preset="whisper"] .fl-beat { --k: .72; font-weight: 300; letter-spacing: .01em; text-transform: lowercase; line-height: 1.25; opacity: 0; text-shadow: 0 1px 18px rgb(0 0 0 / .6); }
+[data-preset="whisper"] .fl-beat.on { opacity: .9; }
+
+@media (max-width: 700px) {
+  .fl-stage { --gx: 18px; --gy: 96px; }
+  .fl-beat[data-pos="ml"], .fl-beat[data-pos="mr"] { top: auto; bottom: var(--gy); translate: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fl-beat { transition: opacity .3s linear; transform: none !important; filter: none !important; clip-path: none !important; }
+}

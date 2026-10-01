@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Frameline Studio</title>
+<meta name="description" content="Pitch a film site to the Frameline agent, approve the keyframes, then the film, and edit the words live.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:ital,wght@0,400;0,500;0,600;0,700;1,500&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/studio.css">
+</head>
+<body class="studio-body">
+<div class="grain" aria-hidden="true"></div>
+
+<header class="topbar">
+  <a class="brand" href="/" aria-label="Back to Frameline"><i class="ph ph-film-strip"></i><span>Frameline</span></a>
+
+  <ol class="stepper" id="stepper" aria-label="Progress">
+    <li data-step="brief"><span class="dot"><i class="ph ph-chat-circle-text"></i></span><span class="lbl">Brief</span></li>
+    <li data-step="board"><span class="dot"><i class="ph ph-film-slate"></i></span><span class="lbl">Storyboard</span></li>
+    <li data-step="keyframes"><span class="dot"><i class="ph ph-aperture"></i></span><span class="lbl">Keyframes</span></li>
+    <li data-step="film"><span class="dot"><i class="ph ph-film-reel"></i></span><span class="lbl">Film</span></li>
+    <li data-step="deliver"><span class="dot"><i class="ph ph-package"></i></span><span class="lbl">Deliver</span></li>
+    <span class="stepper-fill" id="stepper-fill" aria-hidden="true"></span>
+  </ol>
+
+  <div class="topbar-right">
+    <div class="balance" id="balance" title="The agent's Venice balance, topped up from its 1Claw wallet">
+      <i class="ph ph-coins"></i><span id="balance-text">Balance</span>
+    </div>
+    <button class="btn btn-ghost btn-sm" id="new-btn" title="Start a new film"><i class="ph ph-plus"></i><span class="hide-sm">New</span></button>
+    <button class="btn btn-ghost btn-sm" id="guide-btn"><i class="ph ph-question"></i><span class="hide-sm">Guide</span></button>
+  </div>
+</header>
+
+<main class="room" id="room">
+  <div class="light" aria-hidden="true"></div>
+  <div class="bignum" id="bignum" aria-hidden="true"></div>
+
+  <!-- 1. Pitch -->
+  <section class="scene" data-scene="pitch" hidden>
+    <div class="pitch">
+      <p class="eyebrow">New film</p>
+      <h1 class="kinetic" id="pitch-title">What are we making?</h1>
+      <p class="lede">Say it the way you would to a director. The more you say, the fewer questions I ask.</p>
+      <div class="pitch-box" id="pitch-box">
+        <label class="sr-only" for="pitch-input">Your pitch</label>
+        <textarea id="pitch-input" rows="3" placeholder="A launch film for Ember, our handmade ceramic dripper. Warm, slow, morning light. For people who weigh their coffee."></textarea>
+        <div class="pitch-foot">
+          <div class="refs" id="refs">
+            <label class="ref-add" id="ref-add" title="Add images: your product, your work, your face, a mood">
+              <input type="file" id="ref-input" accept="image/*" multiple hidden>
+              <i class="ph ph-image-square"></i><span>Add images</span>
+            </label>
+          </div>
+          <button class="btn btn-primary" id="pitch-go">Continue <i class="ph ph-arrow-right"></i></button>
+        </div>
+      </div>
+      <div class="starters" id="starters">
+        <button class="chip" data-start="A product film for "><i class="ph ph-cube"></i> Product</button>
+        <button class="chip" data-start="A portfolio site for my work as "><i class="ph ph-user-focus"></i> Portfolio</button>
+        <button class="chip" data-start="A brand story for "><i class="ph ph-flag"></i> Brand</button>
+        <button class="chip" data-start="An event page for "><i class="ph ph-calendar-star"></i> Event</button>
+        <button class="chip" data-start="Something strange: "><i class="ph ph-spiral"></i> Experimental</button>
+        <button class="chip chip-quiet" id="example-btn"><i class="ph ph-magic-wand"></i> Try an example</button>
+      </div>
+    </div>
+    <div class="reading" id="reading" hidden aria-live="polite">
+      <p class="eyebrow">Reading your pitch</p>
+      <p class="reading-text" id="reading-text"></p>
+    </div>
+  </section>
+
+  <!-- 2. Questions, one at a time -->
+  <section class="scene" data-scene="questions" hidden>
+    <div class="tray" id="tray" aria-label="What I have so far"></div>
+    <div class="q-wrap" id="q-wrap"></div>
+  </section>
+
+  <!-- 3. Brief + controls -->
+  <section class="scene" data-scene="confirm" hidden>
+    <div class="confirm">
+      <div class="confirm-main">
+        <p class="eyebrow">The brief</p>
+        <h2 class="kinetic confirm-title" id="c-headline"></h2>
+        <dl class="brief-rows" id="brief-rows"></dl>
+        <div class="c-refs" id="c-refs"></div>
+      </div>
+      <aside class="controls" aria-label="Controls">
+        <div class="ctl">
+          <div class="ctl-label">Kind of site</div>
+          <div class="seg" id="ctl-type" role="radiogroup"></div>
+        </div>
+        <div class="ctl">
+          <div class="ctl-label">Look</div>
+          <div class="seg seg-wrap" id="ctl-style" role="radiogroup"></div>
+        </div>
+        <div class="ctl">
+          <div class="ctl-label">Length <span class="ctl-val" id="len-val"></span></div>
+          <input type="range" id="ctl-scenes" min="2" max="6" step="1" aria-label="Number of camera moves">
+          <div class="ticks" aria-hidden="true"><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span></div>
+        </div>
+        <div class="ctl">
+          <div class="ctl-label">Quality</div>
+          <div class="seg" id="ctl-res" role="radiogroup"></div>
+        </div>
+        <div class="price">
+          <div><div class="fig" id="p-price">$0</div><div class="fig-label">Your price</div></div>
+          <div><div class="fig muted" id="p-cost">$0</div><div class="fig-label" id="p-cost-label">Agent's render cost</div></div>
+        </div>
+        <button class="btn btn-primary btn-block" id="direct-btn">Direct the storyboard <i class="ph ph-sparkle"></i></button>
+        <button class="link-btn" id="repitch-btn"><i class="ph ph-arrow-counter-clockwise"></i> Change the pitch</button>
+      </aside>
+    </div>
+    <div class="directing" id="directing" hidden>
+      <p class="eyebrow">The director is at work</p>
+      <h2 class="kinetic" id="directing-title">Writing the shots</h2>
+      <div class="ghost-strip" id="ghost-strip"></div>
+    </div>
+  </section>
+
+  <!-- 4. Storyboard, keyframes and film share one board -->
+  <section class="scene" data-scene="board" hidden>
+    <div class="board-top">
+      <div>
+        <p class="eyebrow" id="board-eyebrow">Storyboard</p>
+        <h2 id="board-title"></h2>
+        <p id="board-tagline"></p>
+      </div>
+      <div class="board-status" id="board-status"></div>
+    </div>
+    <div class="strip" id="strip"></div>
+    <div class="progress" aria-hidden="true"><span id="progress-bar"></span></div>
+    <div class="board-foot">
+      <div class="gate" id="gate">
+        <div class="gate-copy">
+          <h3 id="gate-title"></h3>
+          <p id="gate-body"></p>
+        </div>
+        <div class="gate-actions">
+          <button class="link-btn" id="gate-back"></button>
+          <button class="btn btn-primary" id="gate-go"></button>
+        </div>
+      </div>
+      <div class="ledger" id="ledger" hidden>
+        <div class="ledger-head"><i class="ph ph-receipt"></i> Agent activity</div>
+        <ol id="ledger-list"></ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5. Deliver, with live words -->
+  <section class="scene" data-scene="deliver" hidden>
+    <div class="deliver">
+      <div class="deliver-view">
+        <div class="device"><iframe id="result-frame" title="Your site, editable"></iframe></div>
+        <div class="deliver-bar">
+          <span class="edit-hint"><i class="ph ph-cursor-text"></i> Click any text in the preview to edit it</span>
+          <div class="deliver-actions">
+            <a class="btn btn-ghost btn-sm" id="open-site" target="_blank" rel="noopener">Open <i class="ph ph-arrow-square-out"></i></a>
+            <a class="btn btn-primary btn-sm" id="download-zip">Download zip <i class="ph ph-download-simple"></i></a>
+          </div>
+        </div>
+      </div>
+      <aside class="words" aria-label="The words on your site">
+        <div class="words-head">
+          <h2>Words and type</h2>
+          <span class="words-tools"><span class="save-state" id="save-state"></span><button class="link-btn undo-btn" id="undo-btn" type="button" title="Undo the agent's last rewrite or layout"><i class="ph ph-arrow-u-up-left"></i> Undo</button></span>
+        </div>
+        <form class="rewrite" id="rewrite">
+          <label class="sr-only" for="rewrite-input">Direct the agent</label>
+          <input id="rewrite-input" placeholder="Direct the agent: funnier, gallery feel, bigger ending">
+          <div class="agent-btns">
+            <button class="btn btn-ghost btn-sm" type="submit" data-act="words"><i class="ph ph-pen-nib"></i> Rewrite words</button>
+            <button class="btn btn-ghost btn-sm" type="submit" data-act="layout"><i class="ph ph-layout"></i> Lay out text</button>
+          </div>
+        </form>
+        <div class="voice" id="voice" hidden></div>
+        <div class="word-fields" id="word-fields"></div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- The agent speaks here, one line at a time -->
+  <div class="agent-line" id="agent-line" aria-live="polite">
+    <span class="agent-dot" aria-hidden="true"></span>
+    <span id="agent-text"></span>
+  </div>
+</main>
+
+<!-- Guided tour -->
+<div class="tour" id="tour" hidden>
+  <div class="tour-spot" id="tour-spot"></div>
+  <div class="tour-card" id="tour-card" role="dialog" aria-modal="true" aria-labelledby="tour-title">
+    <div class="tour-count" id="tour-count"></div>
+    <h3 id="tour-title"></h3>
+    <p id="tour-body"></p>
+    <div class="tour-nav">
+      <button class="link-btn" id="tour-skip">Skip</button>
+      <div class="tour-btns">
+        <button class="btn btn-ghost btn-sm" id="tour-back">Back</button>
+        <button class="btn btn-primary btn-sm" id="tour-next">Next</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/studio.js" type="module"></script>
+</body>
+</html>

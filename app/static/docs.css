@@ -1,0 +1,67 @@
+/* Docs: a reading page. Tokens and buttons come from app.css. */
+.btn-sm { padding: 0.55rem 0.95rem; font-size: 0.86rem; }
+.docs-top {
+  position: sticky; top: 0; z-index: 10; display: flex; justify-content: space-between; align-items: center;
+  padding: 14px clamp(16px, 4vw, 40px); background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--line);
+}
+.docs-tag { margin-left: 0.4rem; font: 500 0.72rem/1 "Geist Mono", monospace; color: var(--text-3); padding: 0.3rem 0.5rem; border: 1px solid var(--line-2); border-radius: 999px; }
+.docs { max-width: 1180px; margin: 0 auto; padding: 0 clamp(16px, 4vw, 40px); display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: clamp(24px, 5vw, 72px); }
+
+.toc { position: sticky; top: 80px; align-self: start; padding: 40px 0; max-height: calc(100dvh - 80px); overflow-y: auto; }
+.toc-head { font: 500 0.72rem/1 "Geist Mono", monospace; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.9rem; }
+.toc ol { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.15rem; border-left: 1px solid var(--line); }
+.toc a { display: block; padding: 0.3rem 0 0.3rem 0.9rem; margin-left: -1px; border-left: 1px solid transparent; font-size: 0.88rem; color: var(--text-3); transition: color 0.2s, border-color 0.2s; }
+.toc a:hover { color: var(--text); }
+.toc a.on { color: var(--text); border-left-color: var(--accent); }
+
+.prose { padding: 40px 0 120px; max-width: 760px; min-width: 0; }
+.prose section { padding-top: 24px; margin-bottom: 40px; scroll-margin-top: 72px; }
+.prose h1 { font-size: clamp(2.2rem, 4vw, 3rem); font-weight: 600; letter-spacing: -0.035em; line-height: 1.05; }
+.prose h2 { font-size: 1.6rem; font-weight: 600; letter-spacing: -0.025em; line-height: 1.15; padding-top: 1rem; border-top: 1px solid var(--line); }
+.prose h3 { font-size: 1.02rem; font-weight: 600; margin-top: 1.6rem; display: flex; align-items: center; gap: 0.45rem; }
+.prose h3 i { color: var(--accent); }
+.prose p, .prose li { color: var(--text-2); line-height: 1.7; }
+.prose p { margin-top: 0.9rem; }
+.prose b, .prose strong { color: var(--text); font-weight: 600; }
+.prose .lead { font-size: 1.15rem; color: var(--text); margin-top: 1.1rem; }
+.prose ul, .prose ol { margin-top: 0.9rem; padding-left: 1.2rem; display: grid; gap: 0.45rem; }
+.prose code { font: 0.86em/1 "Geist Mono", monospace; padding: 0.15em 0.4em; border-radius: 5px; background: var(--surface-2); color: var(--text); word-break: break-word; }
+.prose .note { padding: 0.8rem 1rem; border-left: 2px solid var(--accent); background: var(--accent-soft); border-radius: 0 8px 8px 0; color: var(--text); font-size: 0.93rem; }
+.pay { font-style: normal; font: 500 0.7rem/1 "Geist Mono", monospace; color: var(--accent); padding: 0.2rem 0.45rem; border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent); border-radius: 999px; margin-left: 0.2rem; vertical-align: 1px; }
+
+.facts { margin-top: 1.6rem; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--line); }
+.facts div { padding: 0.9rem 0.2rem; border-bottom: 1px solid var(--line); color: var(--text); font-size: 0.95rem; }
+.facts span { display: block; font: 500 0.7rem/1.6 "Geist Mono", monospace; color: var(--text-3); }
+
+.steps li::marker { color: var(--accent); font-weight: 600; }
+
+table { width: 100%; margin-top: 1.1rem; border-collapse: collapse; font-size: 0.9rem; display: block; overflow-x: auto; }
+thead th { text-align: left; font: 500 0.72rem/1.4 "Geist Mono", monospace; color: var(--text-3); padding: 0.6rem 0.8rem 0.6rem 0; border-bottom: 1px solid var(--line-2); white-space: nowrap; }
+tbody td { padding: 0.65rem 0.8rem 0.65rem 0; border-bottom: 1px solid var(--line); color: var(--text-2); vertical-align: top; }
+tbody td:first-child { color: var(--text); }
+table.api td:first-child { white-space: nowrap; }
+
+.cards { margin-top: 1.2rem; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.cards article { padding: 1rem 1.1rem 1.1rem; border-radius: var(--r); border: 1px solid var(--line); background: var(--surface); }
+.cards h3 { margin-top: 0; font-size: 0.98rem; }
+.cards p { font-size: 0.9rem; margin-top: 0.5rem; }
+
+.diagram { margin: 1.4rem 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.diagram > i { color: var(--text-3); }
+.diagram .node { padding: 0.5rem 0.8rem; border-radius: 999px; border: 1px solid var(--line-2); font-size: 0.86rem; color: var(--text); }
+.diagram .node.pay { border-color: var(--accent); color: var(--accent); }
+.diagram.money { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; gap: 0.6rem; }
+.diagram.money .node { border-radius: 12px; padding: 0.8rem 0.9rem; display: grid; gap: 0.2rem; background: var(--surface); }
+.diagram.money .node span { font-size: 0.76rem; color: var(--text-3); }
+.diagram.money .edge { display: grid; justify-items: center; gap: 0.2rem; font: 400 0.7rem/1.3 "Geist Mono", monospace; color: var(--text-3); text-align: center; max-width: 120px; }
+.diagram.money .edge i { color: var(--accent); font-size: 1.1rem; }
+
+@media (max-width: 860px) {
+  .docs { grid-template-columns: 1fr; }
+  .toc { display: none; }
+  .cards, .facts { grid-template-columns: 1fr; }
+  .diagram.money { grid-template-columns: 1fr; }
+  .diagram.money .edge { max-width: none; }
+  .diagram.money .edge i { transform: rotate(90deg); }
+}

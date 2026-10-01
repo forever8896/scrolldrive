@@ -1,0 +1,26 @@
+# Secrets and spend records never leave this machine
+*.env
+payments.jsonl
+outputs/venice-topup-*.json
+
+# Research dumps and caches
+research/
+__pycache__/
+*.pyc
+
+# Generated work: sessions, uploads and runs stay local...
+outputs/*
+!outputs/runs/
+outputs/runs/*
+# ...except the showcase film the home page plays
+!outputs/runs/psyduck-plush-bba2/
+outputs/runs/psyduck-plush-bba2/*
+!outputs/runs/psyduck-plush-bba2/site/
+!outputs/runs/psyduck-plush-bba2/kf-?.png
+!outputs/runs/psyduck-plush-bba2/clip-?-?.mp4
+!outputs/runs/psyduck-plush-bba2/report.json
+!outputs/runs/psyduck-plush-bba2/voices.json
+
+# Storyboards of private projects; the showcase's stays
+configs/*
+!configs/psyduck-plush-bba2.json

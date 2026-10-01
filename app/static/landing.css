@@ -1,0 +1,39 @@
+/* Home: headline, one example in a window, one button. Tokens and buttons come from app.css. */
+.landing { min-height: 100dvh; display: grid; grid-template-rows: auto 1fr; }
+.top { padding: 22px clamp(16px, 4vw, 40px); display: flex; justify-content: space-between; align-items: center; }
+.top-link { font-size: 0.92rem; color: var(--text-2); }
+.top-link:hover { color: var(--text); }
+.home {
+  width: min(100% - 32px, 1080px); margin: 0 auto; padding: clamp(12px, 4vh, 48px) 0 clamp(32px, 6vh, 64px);
+  display: grid; justify-items: center; text-align: center;
+}
+.home-title { font-size: clamp(2.2rem, 5vw, 4.2rem); font-weight: 600; letter-spacing: -0.035em; line-height: 1.04; max-width: 17ch; text-wrap: balance; }
+.home-sub { margin-top: 1rem; color: var(--text-2); font-size: clamp(1rem, 1.3vw, 1.15rem); max-width: 52ch; text-wrap: balance; }
+
+.window {
+  margin: clamp(28px, 5vh, 48px) 0 0; border-radius: 14px; overflow: hidden;
+  /* Small enough that headline, window and button share one screen. */
+  width: min(100%, 780px, calc((100dvh - 470px) * 16 / 9)); min-width: min(100%, 420px);
+  border: 1px solid var(--line-2); background: #0b0b0c; box-shadow: var(--shadow);
+}
+.window-bar { display: flex; gap: 6px; padding: 11px 14px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.window-bar span { width: 10px; height: 10px; border-radius: 99px; background: var(--line-2); }
+.window-screen { position: relative; aspect-ratio: 16 / 9; color: #f3efe7; text-align: left; container-type: inline-size; }
+.window-screen video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+/* The example site's lines, scaled to the window. */
+.window-screen .fl-stage { --gx: 5cqw; --gy: 7cqw; }
+.window-screen .fl-beat { font-family: Geist, system-ui, sans-serif; }
+.window-screen .fl-beat[data-size="s"] { --fs: clamp(11px, 1.7cqw, 18px); }
+.window-screen .fl-beat[data-size="m"] { --fs: clamp(15px, 3cqw, 34px); }
+.window-screen .fl-beat[data-size="l"] { --fs: clamp(18px, 4.2cqw, 48px); }
+.window-screen .fl-beat[data-size="xl"] { --fs: clamp(22px, 6cqw, 68px); }
+
+.home-cta { margin-top: clamp(28px, 5vh, 44px); padding: 0.95rem 1.5rem; font-size: 1rem; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .home-title, .home-sub, .window, .home-cta { animation: rise 1s var(--ease) both; }
+  .home-sub { animation-delay: 0.08s; }
+  .window { animation-delay: 0.16s; }
+  .home-cta { animation-delay: 0.24s; }
+  @keyframes rise { from { opacity: 0; transform: translateY(18px); } }
+}

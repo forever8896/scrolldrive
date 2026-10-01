@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KOICHA / Psyduck</title>
+<meta name="description" content="The headache persists. The value accrues.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root { --bg: #0B0B0C; --ink: #F2EFE9; --muted: #8C867A; --accent: #C9A227; --font: "Syne"; }
+  * { box-sizing: border-box; margin: 0; }
+  html { background: var(--bg); }
+  body { background: var(--bg); color: var(--ink); font: 400 17px/1.6 var(--font), system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  .hero { min-height: 92vh; display: grid; align-content: end; justify-items: start; padding: 88px clamp(16px, 6vw, 80px) 12vh; }
+  /* Title position, set in the studio: rows t / m / b, columns l / c / r. */
+  [data-hero^="t"] .hero { align-content: start; padding-top: 18vh; }
+  [data-hero^="m"] .hero, [data-hero="c"] .hero { align-content: center; }
+  [data-hero$="c"] .hero, [data-hero="c"] .hero { justify-items: center; text-align: center; }
+  [data-hero$="r"] .hero { justify-items: end; text-align: right; }
+  h1 { font: 500 clamp(44px, 8.5vw, 128px)/0.98 var(--font), system-ui, sans-serif; letter-spacing: -0.03em; max-width: 14ch; }
+  .tagline { margin-top: 22px; color: var(--muted); font-size: clamp(17px, 1.6vw, 21px); max-width: 44ch; }
+  .track { position: relative; }
+  .stage { position: sticky; top: 0; height: 100vh; overflow: hidden; background: var(--bg); }
+  .stage video, .stage img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .stage::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(180deg, color-mix(in srgb, var(--bg) 35%, transparent) 0%, transparent 30%, transparent 62%, color-mix(in srgb, var(--bg) 70%, transparent) 100%); }
+  .fl-beat { font-family: var(--font), system-ui, sans-serif; }
+  .blocks { padding: 14vh clamp(16px, 6vw, 80px) 4vh; display: grid; gap: 10vh; }
+  .block { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: clamp(20px, 5vw, 80px); align-items: baseline;
+    border-top: 1px solid color-mix(in srgb, var(--ink) 14%, transparent); padding-top: 28px; }
+  .block h2 { font: 500 clamp(26px, 3vw, 40px)/1.1 var(--font), system-ui, sans-serif; letter-spacing: -0.02em; }
+  .block p { color: var(--muted); font-size: clamp(17px, 1.4vw, 20px); max-width: 60ch; white-space: pre-line; }
+  .end { min-height: 60vh; display: grid; place-items: center; text-align: center; padding: 10vh 16px; }
+  .end h2 { font: 500 clamp(36px, 6vw, 84px)/1 var(--font), system-ui, sans-serif; letter-spacing: -0.03em; }
+  .cta { display: inline-block; margin-top: 30px; padding: 15px 30px; border-radius: 999px; background: var(--accent);
+    color: var(--bg); text-decoration: none; font-weight: 600; transition: transform .25s ease; }
+  .cta:active { transform: scale(.98); }
+  .static .track { height: auto !important; }
+  .static .stage { position: relative; height: auto; min-height: 70vh; padding: 24px 0; }
+  .static .fl-stage { position: relative; display: grid; gap: 20px; padding: 60vh var(--gx) 0; }
+  .static .fl-beat { position: relative; inset: auto; translate: none; opacity: 1; }
+  @media (max-width: 760px) { .block { grid-template-columns: 1fr; } }
+  @media (prefers-reduced-motion: no-preference) {
+    .hero h1, .hero .tagline { animation: rise 1.1s cubic-bezier(.16,1,.3,1) both; }
+    .hero .tagline { animation-delay: .15s; }
+    @keyframes rise { from { opacity: 0; transform: translateY(24px); } }
+  }
+/* Frameline text layer: the lines that play over a scroll film.
+   One style per site (data-preset on the stage), and per line a position on a 3x3 grid,
+   a size and an entrance. Shared by every generated site and the Frameline landing page. */
+.fl-stage { position: absolute; inset: 0; z-index: 3; pointer-events: none; --gx: clamp(20px, 6vw, 88px); --gy: clamp(84px, 13vh, 150px); }
+.fl-beat {
+  position: absolute; pointer-events: auto; color: inherit; opacity: 0; max-width: var(--mw, 18ch);
+  font-size: calc(var(--fs) * var(--k, 1)); line-height: 1.06; letter-spacing: -0.02em; white-space: pre-line; text-wrap: balance;
+  transition: opacity .6s cubic-bezier(.16,1,.3,1), transform .9s cubic-bezier(.16,1,.3,1), filter .7s cubic-bezier(.16,1,.3,1), clip-path 1s cubic-bezier(.16,1,.3,1);
+}
+.fl-text { outline: none; }
+
+/* Position: rows t / m / b, columns l / c / r ("c" alone is dead centre). */
+.fl-beat[data-pos^="t"] { top: var(--gy); }
+.fl-beat[data-pos^="b"] { bottom: var(--gy); }
+.fl-beat[data-pos="ml"], .fl-beat[data-pos="mr"], .fl-beat[data-pos="c"] { top: 50%; translate: 0 -50%; }
+.fl-beat[data-pos$="l"] { left: var(--gx); text-align: left; }
+.fl-beat[data-pos$="r"] { right: var(--gx); text-align: right; }
+.fl-beat[data-pos="tc"], .fl-beat[data-pos="bc"] { left: 50%; translate: -50% 0; text-align: center; }
+.fl-beat[data-pos="c"] { left: 50%; translate: -50% -50%; text-align: center; }
+
+/* Size */
+.fl-beat[data-size="s"] { --fs: clamp(16px, 1.45vw, 22px); --mw: 30ch; }
+.fl-beat[data-size="m"] { --fs: clamp(26px, 3.1vw, 46px); --mw: 18ch; }
+.fl-beat[data-size="l"] { --fs: clamp(34px, 4.8vw, 74px); --mw: 14ch; }
+.fl-beat[data-size="xl"] { --fs: clamp(44px, 7.6vw, 124px); --mw: 11ch; }
+
+/* Entrance */
+.fl-beat[data-enter="rise"] { transform: translateY(22px); }
+.fl-beat[data-enter="blur"] { filter: blur(14px); transform: scale(1.03); }
+.fl-beat[data-enter="wipe"] { clip-path: inset(-20% 100% -20% 0); }
+.fl-beat[data-enter="wipe"][data-pos$="r"] { clip-path: inset(-20% 0 -20% 100%); }
+.fl-beat[data-enter="wipe"].on { clip-path: inset(-20% -4% -20% -4%); }
+/* Shown: after the entrance rules and more specific than them, so every entrance resolves. */
+.fl-beat.on[data-enter] { opacity: 1; transform: none; filter: none; }
+
+/* Styles */
+[data-preset="cinema"] .fl-beat { font-weight: 500; text-shadow: 0 2px 28px rgb(0 0 0 / .45); }
+[data-preset="editorial"] .fl-beat { font-weight: 400; letter-spacing: -0.035em; line-height: 1.02; text-shadow: 0 2px 24px rgb(0 0 0 / .35); }
+[data-preset="editorial"] .fl-beat::before {
+  content: attr(data-index); display: block; margin-bottom: 1em; font: 500 11px/1 ui-monospace, "SFMono-Regular", Menlo, monospace;
+  letter-spacing: .14em; opacity: .7; text-shadow: none;
+}
+[data-preset="gallery"] .fl-beat {
+  --k: .62; --mw: 32ch; font-weight: 400; line-height: 1.35; letter-spacing: 0; padding: 14px 18px 16px;
+  background: color-mix(in srgb, var(--bg, #0b0b0c) 80%, transparent); border-left: 2px solid var(--accent, currentColor);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); text-align: left !important;
+}
+[data-preset="gallery"] .fl-beat::before {
+  content: "N\BA  " attr(data-n); display: block; margin-bottom: .7em; font: 500 11px/1 ui-monospace, "SFMono-Regular", Menlo, monospace;
+  letter-spacing: .12em; opacity: .65;
+}
+[data-preset="poster"] .fl-beat { --k: 1.18; font-weight: 700; text-transform: uppercase; letter-spacing: -0.045em; line-height: .9; text-shadow: 0 4px 40px rgb(0 0 0 / .4); }
+[data-preset="whisper"] .fl-beat { --k: .72; font-weight: 300; letter-spacing: .01em; text-transform: lowercase; line-height: 1.25; opacity: 0; text-shadow: 0 1px 18px rgb(0 0 0 / .6); }
+[data-preset="whisper"] .fl-beat.on { opacity: .9; }
+
+@media (max-width: 700px) {
+  .fl-stage { --gx: 18px; --gy: 96px; }
+  .fl-beat[data-pos="ml"], .fl-beat[data-pos="mr"] { top: auto; bottom: var(--gy); translate: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fl-beat { transition: opacity .3s linear; transform: none !important; filter: none !important; clip-path: none !important; }
+}
+
+</style>
+</head>
+<body data-hero="tr">
+  <section class="hero">
+    <h1 data-edit="title">KOICHA / Psyduck</h1>
+    <p class="tagline" data-edit="tagline">The headache persists. The value accrues.</p>
+  </section>
+
+  <section class="track" id="track">
+    <div class="stage" id="stage">
+      <video id="film" muted playsinline preload="none" poster="poster.jpg"></video>
+    </div>
+  </section>
+
+  <div class="blocks"><section class="block"><h2 data-edit="sections.0.heading">The Object</h2><p data-edit="sections.0.body">Official Psyduck plush. Polyester fill, synthetic mohair, hand-finished seam. Height: 28cm. Weight: 340g. The headache is not included; it is implied.</p></section><section class="block"><h2 data-edit="sections.1.heading">The Condition</h2><p data-edit="sections.1.body">In the lore, Psyduck holds its skull to suppress psychic waves. Here, the pose reads as vigil. Koicha-grade concentration. The stillness of something waiting to become valuable.</p></section><section class="block"><h2 data-edit="sections.2.heading">Acquisition</h2><p data-edit="sections.2.body">Produced in numbered units. Each arrives in unmarked charcoal packaging, no certificate. Inspect by appointment. Email below.</p></section></div>
+
+  <section class="end">
+    <div>
+      <h2 data-edit="title">KOICHA / Psyduck</h2>
+      <a class="cta" href="#" data-edit="cta.label">Request viewing</a>
+    </div>
+  </section>
+
+<script>
+/* Frameline text layer: mounts the lines of a scroll film into a stage and shows each one
+   for its stretch of the film. show(p) takes the film's progress, 0 to 1. */
+window.FramelineText = (() => {
+  const POS = ["tl", "tc", "tr", "ml", "c", "mr", "bl", "bc", "br"];
+  const SIZES = ["s", "m", "l", "xl"];
+  const ENTERS = ["rise", "fade", "blur", "wipe", "type"];
+  const pad = (n) => String(n).padStart(2, "0");
+
+  function mount(host, acts, layout) {
+    layout = layout || {};
+    const stage = document.createElement("div");
+    stage.className = "fl-stage";
+    stage.dataset.preset = layout.preset || "cinema";
+    host.appendChild(stage);
+    const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const n = acts.length;
+    const items = acts.map((a, i) => {
+      const L = (layout.beats || [])[i] || {};
+      const el = document.createElement("div");
+      el.className = "fl-beat";
+      el.dataset.pos = POS.includes(L.pos) ? L.pos : "bc";
+      el.dataset.size = SIZES.includes(L.size) ? L.size : "m";
+      el.dataset.enter = ENTERS.includes(L.enter) ? L.enter : "rise";
+      el.dataset.index = `${pad(i + 1)} / ${pad(n)}`;
+      el.dataset.n = pad(i + 1);
+      const t = document.createElement("span");
+      t.className = "fl-text";
+      t.dataset.edit = `beats.${i}`;
+      t.textContent = a.text;
+      el.appendChild(t);
+      stage.appendChild(el);
+      return { el, t, from: a.from, to: a.to };
+    });
+
+    // Typewriter entrance: characters appear over a moment; never while someone edits.
+    function typeIn(it) {
+      if (reduce || it.typing || document.body.classList.contains("fl-editing")) return;
+      it.typing = true;
+      const full = it.t.textContent;
+      const start = performance.now();
+      const dur = Math.min(1100, 24 * full.length + 200);
+      const step = (now) => {
+        const k = Math.min(1, (now - start) / dur);
+        it.t.textContent = full.slice(0, Math.round(full.length * k));
+        if (k < 1 && it.el.classList.contains("on")) requestAnimationFrame(step);
+        else { it.t.textContent = full; it.typing = false; }
+      };
+      requestAnimationFrame(step);
+    }
+
+    function show(p) {
+      for (const it of items) {
+        const on = p >= it.from && p < it.to;
+        if (on === it.el.classList.contains("on")) continue;
+        it.el.classList.toggle("on", on);
+        if (on && it.el.dataset.enter === "type") typeIn(it);
+      }
+    }
+    return { stage, items, show };
+  }
+  return { mount, POS, SIZES, ENTERS };
+})();
+
+</script>
+<script>
+(() => {
+  const DURATION = 15.540;
+  const ACTS = [{"from": 0.0, "to": 0.14, "text": "Some conditions warrant permanent display."}, {"from": 0.193, "to": 0.473, "text": "Light finds the seam. Shadow finds the rest."}, {"from": 0.527, "to": 0.807, "text": "The migraine is the detail."}, {"from": 0.86, "to": 1.01, "text": "It has never known relief. It will outlast you."}];
+  const LAYOUT = {"preset": "editorial", "hero": "tr", "beats": [{"pos": "br", "size": "m", "enter": "fade"}, {"pos": "mr", "size": "m", "enter": "rise"}, {"pos": "tr", "size": "s", "enter": "rise"}, {"pos": "tr", "size": "l", "enter": "fade"}]};
+  const track = document.getElementById('track');
+  const stage = document.getElementById('stage');
+  const video = document.getElementById('film');
+
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches ||
+    (navigator.connection && (navigator.connection.saveData || /2g/.test(navigator.connection.effectiveType || '')));
+  const scrub = !reduce && matchMedia('(pointer: fine) and (min-width: 900px)').matches;
+  const text = FramelineText.mount(stage, ACTS, LAYOUT);
+
+  if (reduce) {
+    document.body.classList.add('static');
+    const img = document.createElement('img');
+    img.src = 'poster.jpg'; img.alt = '';
+    video.replaceWith(img);
+    return;
+  }
+
+  new IntersectionObserver((entries, io) => {
+    if (!entries[0].isIntersecting) return;
+    video.src = scrub ? 'film.mp4' : 'film-mobile.mp4';
+    video.preload = 'auto';
+    if (!scrub) { video.loop = true; video.play().catch(() => {}); }
+    io.disconnect();
+  }, { rootMargin: '150% 0px' }).observe(track);
+
+  const progress = () => {
+    const r = track.getBoundingClientRect();
+    return Math.min(1, Math.max(0, -r.top / (r.height - innerHeight)));
+  };
+
+  if (!scrub) {
+    // Touch: the film loops; the lines follow its clock.
+    track.style.height = '220vh';
+    const tickLoop = () => { if (video.duration) text.show(video.currentTime / video.duration); requestAnimationFrame(tickLoop); };
+    requestAnimationFrame(tickLoop);
+    return;
+  }
+
+  // The scrollbar is the playhead; eased so wheel steps feel like camera inertia.
+  track.style.height = `calc(${DURATION * 30}vh + 100vh)`;
+  let smooth = 0;
+  const tick = () => {
+    const goal = progress() * Math.max(0, DURATION - 0.05);
+    smooth += (goal - smooth) * 0.14;
+    if (video.readyState >= 1 && Math.abs(video.currentTime - smooth) > 0.02) video.currentTime = smooth;
+    text.show(smooth / DURATION);
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>

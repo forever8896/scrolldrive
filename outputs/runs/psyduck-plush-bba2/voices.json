@@ -1,0 +1,77 @@
+[
+  {
+    "voice": "Deadpan luxury",
+    "title": "KOICHA / Psyduck",
+    "tagline": "The headache persists. The value accrues.",
+    "beats": [
+      "Some conditions warrant permanent display.",
+      "Light finds the seam. Shadow finds the rest.",
+      "The migraine is the detail.",
+      "It has never known relief. It will outlast you."
+    ],
+    "cta": {
+      "label": "Request viewing",
+      "href": "#"
+    }
+  },
+  {
+    "voice": "Nature documentary",
+    "title": "Psyduck",
+    "tagline": "The specimen cannot recall a pain-free state",
+    "beats": [
+      "The species occupies vast negative space",
+      "Its shadow extends further than its mass",
+      "Vascular distress visible in the plumage",
+      "It waits. The headache does not subside."
+    ],
+    "cta": {
+      "label": "Inquire after stock",
+      "href": "#"
+    }
+  },
+  {
+    "voice": "Noir detective",
+    "title": "The Psyduck",
+    "tagline": "She had a headache that outlasted empires.",
+    "beats": [
+      "The gallery was empty. So was I.",
+      "Forty years of cases. Never saw a shadow so long.",
+      "Stitching held. Most things don't.",
+      "She sat there waiting. They all do."
+    ],
+    "cta": {
+      "label": "Make inquiry",
+      "href": "#"
+    }
+  },
+  {
+    "voice": "Tabloid scoop",
+    "title": "Psyduck",
+    "tagline": "Friends say the headaches are back",
+    "beats": [
+      "Exclusive: the first sighting in months",
+      "Insiders worried as shadows lengthen",
+      "The strain showing in every seam",
+      "Alone on the plinth: what happens now"
+    ],
+    "cta": {
+      "label": "Secure access",
+      "href": "#"
+    }
+  },
+  {
+    "voice": "Wellness app",
+    "title": "Psyduck",
+    "tagline": "Your head hurts. So does mine. Breathe.",
+    "beats": [
+      "Find a quiet room.\nLeave the noise above.",
+      "Notice where the ache lives.\nDo not push it away.",
+      "Touch the seam, the soft nap.\nEven pain has texture.",
+      "You are here.\nThe headache is here."
+    ],
+    "cta": {
+      "label": "Sit with one",
+      "href": "#"
+    }
+  }
+]

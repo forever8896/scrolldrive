@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Frameline Docs</title>
+<meta name="description" content="How Frameline works: the flow, the agents, how it uses 1Claw, the finished sites, the API and deployment.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/docs.css">
+</head>
+<body>
+<header class="docs-top">
+  <a class="brand" href="/"><i class="ph ph-film-strip"></i><span>Frameline</span><span class="docs-tag">Docs</span></a>
+  <a class="btn btn-primary btn-sm" href="/studio">Open the studio <i class="ph ph-arrow-right"></i></a>
+</header>
+
+<div class="docs">
+  <nav class="toc" aria-label="On this page">
+    <p class="toc-head">On this page</p>
+    <ol id="toc">
+      <li><a href="#overview">Overview</a></li>
+      <li><a href="#flow">The flow</a></li>
+      <li><a href="#agents">The agents</a></li>
+      <li><a href="#oneclaw">How it uses 1Claw</a></li>
+      <li><a href="#money">The money path</a></li>
+      <li><a href="#generation">Generation</a></li>
+      <li><a href="#site">The finished site</a></li>
+      <li><a href="#editing">Words and type</a></li>
+      <li><a href="#reliability">Reliability</a></li>
+      <li><a href="#pricing">Pricing</a></li>
+      <li><a href="#api">API</a></li>
+      <li><a href="#files">Project layout</a></li>
+      <li><a href="#local">Run it locally</a></li>
+      <li><a href="#deploy">Deploy on 1Claw</a></li>
+      <li><a href="#gaps">Known gaps</a></li>
+    </ol>
+  </nav>
+
+  <main class="prose">
+    <section id="overview">
+      <h1>Frameline</h1>
+      <p class="lead">Frameline makes websites that play like a film as you scroll. You describe what you want; a team of agents plans the shots, generates them, films the camera moves between them, writes the words and lays them out. You approve before anything is paid for, then edit any word or position on the finished site.</p>
+      <p>The agent pays for its own generation. It holds a wallet whose key it never sees: <strong>1Claw</strong> keeps the key in an HSM and signs only payments that fit rules a human set. Every LLM call goes through 1Claw Shroud, and the API key for the LLM provider lives in a 1Claw vault, not in this code.</p>
+      <div class="facts">
+        <div><span>Input</span>A pitch in plain words, plus up to 6 images</div>
+        <div><span>Output</span>A static site (zip) with a scroll-scrubbed film, ready for any host</div>
+        <div><span>Typical cost to the agent</span>$1.44 for a 3-move film at 768p</div>
+        <div><span>Typical time</span>About 1 to 3 minutes of rendering</div>
+      </div>
+    </section>
+
+    <section id="flow">
+      <h2>The flow</h2>
+      <p>The studio at <code>/studio</code> shows one step at a time. Two steps spend money, and each needs an explicit approval.</p>
+      <ol class="steps">
+        <li><b>Pitch.</b> One free-form description, optionally with images (your product, your work, your face, a mood).</li>
+        <li><b>Questions.</b> The producer infers everything it can and asks only what is missing and would change the film, one question at a time with tap-to-answer options. A rich pitch gets no questions.</li>
+        <li><b>Brief.</b> The understood brief, editable in place, with controls: kind of site, look, length (2 to 6 camera moves) and quality (768p or 1080p). The price updates live.</li>
+        <li><b>Storyboard.</b> The art director writes every keyframe and camera move, picks the colours and font. Nothing is generated yet.</li>
+        <li><b>Keyframes</b> <em class="pay">approval 1</em>. The stills are generated. Any one can be redone with an edited prompt.</li>
+        <li><b>Film</b> <em class="pay">approval 2</em>. Each camera move is filmed from one still exactly onto the next. Meanwhile the copywriter writes the words and the typographer lays them out on the stills.</li>
+        <li><b>Deliver.</b> A live preview of the finished site. Click any text to edit it, change the layout per line, ask the agents to rewrite or re-lay out, then download the zip.</li>
+      </ol>
+      <figure class="diagram" aria-label="Flow diagram">
+        <div class="node">Pitch</div><i class="ph ph-arrow-right"></i>
+        <div class="node">Questions</div><i class="ph ph-arrow-right"></i>
+        <div class="node">Brief</div><i class="ph ph-arrow-right"></i>
+        <div class="node">Storyboard</div><i class="ph ph-arrow-right"></i>
+        <div class="node pay">Keyframes</div><i class="ph ph-arrow-right"></i>
+        <div class="node pay">Film</div><i class="ph ph-arrow-right"></i>
+        <div class="node">Deliver</div>
+      </figure>
+    </section>
+
+    <section id="agents">
+      <h2>The agents</h2>
+      <p>Each role is a separate, focused LLM call with its own prompt. Their output is always treated as data and validated by code: code, not the model, bounds the number of shots, the price and every field.</p>
+      <table>
+        <thead><tr><th>Role</th><th>Model</th><th>When</th><th>Sees</th><th>Produces</th></tr></thead>
+        <tbody>
+          <tr><td>Producer</td><td>MiMo v2.6 Flash</td><td>After the pitch</td><td>Pitch, images</td><td>Brief, only the missing questions</td></tr>
+          <tr><td>Art director</td><td>MiMo v2.6 Flash</td><td>Storyboard</td><td>Brief, images, controls</td><td>Keyframe prompts, how each is made, camera moves, theme, font</td></tr>
+          <tr><td>Copywriter</td><td>Kimi K2</td><td>When the film is approved</td><td>Brief, what each shot shows</td><td>Title, tagline, one line per shot, sections, button</td></tr>
+          <tr><td>Typographer</td><td>MiMo v2.6 Flash</td><td>While the film renders</td><td>Every still and its line</td><td>Style, title position, per-line position, size and entrance</td></tr>
+        </tbody>
+      </table>
+      <p>All four are routed by 1Claw Shroud to OpenRouter. The copywriter writes after the stills exist so it knows what is on screen; it is told never to describe the image or the making of the site. The typographer looks at each still and places text in empty space so it never covers the subject.</p>
+      <p>Briefs, images and earlier copy are untrusted input. Every prompt says so, model output is parsed as JSON and validated, and Shroud inspects the traffic.</p>
+    </section>
+
+    <section id="oneclaw">
+      <h2>How it uses 1Claw</h2>
+      <p>1Claw is the agent's identity, its keychain, its LLM gateway and its wallet. The studio holds no private key and no LLM API key.</p>
+      <div class="cards">
+        <article>
+          <h3><i class="ph ph-identification-badge"></i> Agent identity</h3>
+          <p>The studio is a 1Claw agent, <code>studio</code>. Its API key is exchanged at <code>POST /v1/auth/agent-token</code> for a short-lived JWT, which authenticates everything below. On a 1Claw runtime the platform injects and renews that token itself.</p>
+        </article>
+        <article>
+          <h3><i class="ph ph-vault"></i> Vault</h3>
+          <p>The OpenRouter API key is a secret in a 1Claw vault at <code>providers/openrouter/api-key</code>. Shroud fetches it server-side; the app never reads it.</p>
+        </article>
+        <article>
+          <h3><i class="ph ph-shield-check"></i> Shroud</h3>
+          <p>All LLM calls go to <code>shroud.1claw.co</code> with the agent's JWT and <code>X-Shroud-Provider: openrouter</code>. Shroud injects the provider key from the vault and screens prompts and responses. On the Pro plan this needs no 1Claw credits.</p>
+        </article>
+        <article>
+          <h3><i class="ph ph-wallet"></i> Wallet and signing</h3>
+          <p>The agent's wallet, <code>0x9e55…343e</code> on Base, is held by 1Claw. The app asks 1Claw to sign through <code>/v1/agents/{id}/sign</code>; it never holds the key. Signing a login message (personal_sign) is how it signs in to Venice.</p>
+        </article>
+        <article>
+          <h3><i class="ph ph-currency-circle-dollar"></i> 1claw pay</h3>
+          <p>To top up its Venice balance, the agent answers Venice's x402 payment request through <code>/pay/prepare</code> and <code>/pay/sign</code>. 1Claw checks the payee and the limits before signing a USDC transfer authorization.</p>
+        </article>
+        <article>
+          <h3><i class="ph ph-lock-key"></i> Guardrails</h3>
+          <p>Unattended payments are allowed only to Venice's top-up address, at most $10 per payment and $15 per day. Loosening them needs a human step-up with an authenticator code. Every signature is in the 1Claw audit log.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="money">
+      <h2>The money path</h2>
+      <figure class="diagram money" aria-label="Money path">
+        <div class="node"><b>1Claw wallet</b><span>USDC on Base, key in 1Claw's HSM</span></div>
+        <div class="edge"><span>x402 top-up via 1claw pay</span><i class="ph ph-arrow-right"></i></div>
+        <div class="node"><b>Venice balance</b><span>Signed in with a wallet signature</span></div>
+        <div class="edge"><span>per generation</span><i class="ph ph-arrow-right"></i></div>
+        <div class="node"><b>Stills and moves</b><span>Paid from the balance</span></div>
+      </figure>
+      <ol class="steps">
+        <li>The app asks Venice to top up. Venice replies <code>402 Payment Required</code> with a challenge (minimum top-up $5).</li>
+        <li>1Claw <code>/pay/prepare</code> checks the challenge against the allowlist and caps; <code>/pay/sign</code> returns a signed EIP-3009 authorization.</li>
+        <li>The app sends it to Venice, which settles the USDC on Base and credits the balance.</li>
+        <li>Generations then spend from that balance. Each request is authenticated with a Sign-In-With-Ethereum message signed by 1Claw (EIP-191, a login that cannot move funds).</li>
+      </ol>
+      <p class="note">Two details found while building it: personal_sign needs the message hex-encoded (<code>"0x" + utf8 hex</code>), and Venice accepts the payment only when re-wrapped as an x402 v2 envelope in the <code>X-402-Payment</code> header. Both are handled in <code>scripts/venice.py</code>.</p>
+    </section>
+
+    <section id="generation">
+      <h2>Generation</h2>
+      <table>
+        <thead><tr><th>Asset</th><th>Model on Venice</th><th>Cost</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>Keyframe</td><td>Nano Banana Pro (edit or generate)</td><td>$0.18</td><td>Composed from your images and the previous still, so the subject and world stay consistent</td></tr>
+          <tr><td>Camera move</td><td>MiniMax H3 Max, image to video</td><td>$0.24 at 768p, $0.48 at 1080p</td><td>5 seconds, starts on one still and is told to end on the next (first and last frame)</td></tr>
+        </tbody>
+      </table>
+      <ul>
+        <li><b>Never pays twice.</b> Each step is recorded in <code>venice-state.json</code> before it is paid; a re-run resumes and only does what is missing. A redone still makes its neighbouring moves stale, and only those are filmed again.</li>
+        <li><b>Budget per run.</b> A run stops if it would exceed twice its quote, which leaves room for redos.</li>
+        <li><b>Join check.</b> After filming, the last frame of each move is compared to the next still (SSIM on a small blurred version). A low score is flagged in the studio.</li>
+        <li><b>Polling is free.</b> Video jobs are queued and checked every 15 seconds at no cost.</li>
+      </ul>
+    </section>
+
+    <section id="site">
+      <h2>The finished site</h2>
+      <p>A single static page plus three media files. It is built from <code>templates/scroll-site.html</code> with the brief's theme (background, ink, muted, accent and one of four font families).</p>
+      <table>
+        <thead><tr><th>Visitor</th><th>What plays</th></tr></thead>
+        <tbody>
+          <tr><td>Desktop, mouse or trackpad</td><td>The film is scrubbed by the scrollbar, with eased inertia. Scrolling up plays it backwards.</td></tr>
+          <tr><td>Phone or tablet</td><td>A smaller encode loops on its own; the lines follow its clock. No scrubbing on touch.</td></tr>
+          <tr><td>Reduced motion or data saver</td><td>A still poster with all the lines, in normal page flow.</td></tr>
+        </tbody>
+      </table>
+      <ul>
+        <li><b>Encodes.</b> <code>film.mp4</code> is 1280×720 and all-intra (every frame is a keyframe), so any scroll position seeks instantly. <code>film-mobile.mp4</code> is 960×540 with normal compression.</li>
+        <li><b>Loading.</b> The film only starts downloading when its section is near the viewport.</li>
+        <li><b>Zip.</b> The site folder with <code>DEPLOY.md</code> for Vercel, Netlify, Cloudflare Pages or any server that serves <code>.mp4</code> with range requests.</li>
+      </ul>
+    </section>
+
+    <section id="editing">
+      <h2>Words and type</h2>
+      <p>On the delivered site, the <b>Words and type</b> panel and the preview stay in sync. Every change saves into the site and the zip.</p>
+      <ul>
+        <li><b>Edit in place.</b> Click any text in the preview and type, or use the fields in the panel. Focusing a line scrolls the preview to where it appears.</li>
+        <li><b>Style.</b> One per site: <em>Cinema</em> (subtitle-like), <em>Editorial</em> (with a small 01 / 04 index), <em>Gallery</em> (museum wall label), <em>Poster</em> (huge uppercase), <em>Whisper</em> (small lowercase).</li>
+        <li><b>Per line.</b> Position on a 3×3 grid of the frame, size (S to XL) and entrance (rise, fade, blur, wipe or typewriter).</li>
+        <li><b>Title position</b> on the same 3×3 grid.</li>
+        <li><b>Ask the agents.</b> Type a direction ("funnier", "gallery feel", "bigger ending") and press <em>Rewrite words</em> or <em>Lay out text</em>. The typographer explains each placement in one line.</li>
+        <li><b>Undo</b> steps back to the words and layout before the agents' last change.</li>
+      </ul>
+      <p>The text layer (<code>templates/textlayer.css</code> and <code>.js</code>) is shared: the same code runs in every generated site and in the example on the home page.</p>
+    </section>
+
+    <section id="reliability">
+      <h2>Reliability</h2>
+      <ul>
+        <li><b>Sessions are saved</b> to <code>outputs/sessions/</code>. Reopening the studio in the same browser picks up exactly where it was, including a render in progress.</li>
+        <li><b>Renders run detached</b> from the web server and write a log. A server restart or a closed tab does not stop them; the studio replays the log when it reconnects.</li>
+        <li><b>One render at a time.</b> A second approval waits until the first finishes.</li>
+        <li><b>Approvals are explicit.</b> Shooting and filming each need a request with <code>approve: true</code>; nothing spends from a page load.</li>
+      </ul>
+    </section>
+
+    <section id="pricing">
+      <h2>Pricing</h2>
+      <p>The studio shows two numbers. <b>Your price</b> is what a customer would pay: $29 plus $8 per camera move ($53 for three). <b>Agent's cost</b> is the live Venice cost: stills plus moves, for example $0.72 + $0.72 = $1.44 for three moves at 768p.</p>
+      <p class="note">Collecting the customer's payment is not built yet. Today the price is a quote; the agent pays the render cost from its own balance.</p>
+    </section>
+
+    <section id="api">
+      <h2>API</h2>
+      <p>The studio talks to <code>app/server.py</code> (Python standard library, no framework). Every POST takes JSON with a <code>session</code> id and returns the full session view.</p>
+      <table class="api">
+        <tbody>
+          <tr><td><code>POST /api/session</code></td><td>Start a session</td></tr>
+          <tr><td><code>GET /api/session?session=</code></td><td>Session view: phase, brief, board, job</td></tr>
+          <tr><td><code>POST /api/upload?session=</code></td><td>Add a reference image (raw body, up to 15 MB, 6 per session)</td></tr>
+          <tr><td><code>POST /api/intake</code></td><td>Pitch to brief and the missing questions</td></tr>
+          <tr><td><code>POST /api/answer</code></td><td>Answers to those questions</td></tr>
+          <tr><td><code>POST /api/storyboard</code></td><td>Direct the storyboard with the controls</td></tr>
+          <tr><td><code>POST /api/shoot</code></td><td>Shoot the keyframes (<code>approve: true</code>)</td></tr>
+          <tr><td><code>POST /api/redo</code></td><td>Reshoot one keyframe, optionally with a new prompt</td></tr>
+          <tr><td><code>POST /api/film</code></td><td>Write the words and film the moves (<code>approve: true</code>)</td></tr>
+          <tr><td><code>GET /api/events?session=</code></td><td>Live render events (SSE), replayed from the start</td></tr>
+          <tr><td><code>POST /api/copy</code></td><td>Save edited words and layout; rebuilds the site and zip</td></tr>
+          <tr><td><code>POST /api/rewrite</code></td><td>Copywriter rewrite with a note</td></tr>
+          <tr><td><code>POST /api/layout</code></td><td>Typographer layout with a note</td></tr>
+          <tr><td><code>POST /api/undo</code></td><td>Restore the words and layout before the last agent change</td></tr>
+          <tr><td><code>POST /api/open</code></td><td>Open a finished film for editing (<code>/studio?run=name</code>)</td></tr>
+          <tr><td><code>GET /api/prices</code></td><td>Live Venice prices and the studio's price formula</td></tr>
+          <tr><td><code>GET /api/status</code></td><td>Wallet USDC and Venice balance</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="files">
+      <h2>Project layout</h2>
+      <table class="api">
+        <tbody>
+          <tr><td><code>app/server.py</code></td><td>Web server, sessions, detached render jobs, API</td></tr>
+          <tr><td><code>app/static/</code></td><td>Home, studio and docs pages</td></tr>
+          <tr><td><code>scripts/intake.py</code></td><td>Producer: pitch to brief and questions</td></tr>
+          <tr><td><code>scripts/director.py</code></td><td>Art director: storyboard, theme, Shroud client</td></tr>
+          <tr><td><code>scripts/copywriter.py</code></td><td>Copywriter</td></tr>
+          <tr><td><code>scripts/typographer.py</code></td><td>Typographer (looks at the stills)</td></tr>
+          <tr><td><code>scripts/scrollsite.py</code></td><td>Pipeline: keyframes, film, join check, encode, site, zip</td></tr>
+          <tr><td><code>scripts/venice.py</code></td><td>Venice client: wallet sign-in, top-up via 1claw pay, images, video</td></tr>
+          <tr><td><code>scripts/x402pay.py</code></td><td>1Claw agent token and signing helpers</td></tr>
+          <tr><td><code>templates/</code></td><td>Site template and the shared text layer</td></tr>
+          <tr><td><code>configs/</code>, <code>outputs/</code></td><td>Storyboards, runs, sessions, uploads</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="local">
+      <h2>Run it locally</h2>
+      <ol class="steps">
+        <li>Python 3.11+ and <code>ffmpeg</code> on the path. No pip packages are needed.</li>
+        <li>The studio agent's key in <code>~/.config/1claw/agents/studio.env</code> (<code>ONECLAW_AGENT_ID</code>, <code>ONECLAW_AGENT_API_KEY</code>), created with <code>scripts/studio-rotate-key.py</code>.</li>
+        <li>An OpenRouter key in the 1Claw vault at <code>providers/openrouter/api-key</code>, readable by the agent.</li>
+        <li>Pay guardrails set once with <code>scripts/studio-pay-settings.py</code> (needs your authenticator code), and USDC on Base in the agent's wallet.</li>
+        <li><code>python3 app/server.py 8080</code>, then open <code>http://localhost:8080</code>.</li>
+      </ol>
+      <p>The pipeline also runs from the command line: <code>scripts/director.py</code> writes a storyboard, <code>scripts/scrollsite.py configs/name.json</code> prints a quote and <code>--yes</code> renders it.</p>
+    </section>
+
+    <section id="deploy">
+      <h2>Deploy on 1Claw</h2>
+      <p>1Claw Cloud Runtimes run a container on Cloud Run with a public URL at <code>{slug}.run.1claw.co</code>. Pro includes one small or medium runtime at no charge. Frameline fits the Python template:</p>
+      <table class="api">
+        <tbody>
+          <tr><td>Template</td><td><code>python</code> (Python 3.12, the 1Claw CLI and sidecar preinstalled)</td></tr>
+          <tr><td>Preset</td><td><code>medium</code>: 1 vCPU, 2 GB, enough for ffmpeg encodes</td></tr>
+          <tr><td>Agent</td><td>Bound to the existing <code>studio</code> agent, so the same wallet, guardrails and vault grant apply</td></tr>
+          <tr><td>Source</td><td>A git repository, cloned at start; <code>requirements.txt</code> is installed</td></tr>
+          <tr><td>Start</td><td><code>python app/server.py</code>, listening on the port the runtime provides</td></tr>
+          <tr><td>Hosting</td><td><code>expose_http</code> with a slug, set from the dashboard or the API (the CLI has no flag for it)</td></tr>
+        </tbody>
+      </table>
+      <h3>Prepared in the code</h3>
+      <ul>
+        <li><b>ffmpeg.</b> The Python image has none and runs as a non-root user, so apt is not an option. <code>requirements.txt</code> installs <code>imageio-ffmpeg</code>, which ships a static ffmpeg with x264, SSIM and blur; the pipeline uses the system ffmpeg when there is one and that build otherwise. ffprobe is no longer needed.</li>
+        <li><b>Port and host.</b> The server reads <code>PORT</code> and <code>HOST</code>; on the runtime it runs with <code>HOST=0.0.0.0</code> on the port the runtime provides.</li>
+        <li><b>Credentials.</b> The agent key is read from <code>ONECLAW_AGENT_ID</code> and <code>ONECLAW_AGENT_API_KEY</code> (a vault-backed variable on the runtime), then the local key file, then the token the runtime injects.</li>
+        <li><b>Spend protection.</b> With <code>STUDIO_ACCESS_CODE</code> set, every action that spends money or LLM quota needs the code. Open the studio once with <code>?code=...</code> and it is remembered in that browser.</li>
+        <li><b>Showcase.</b> The repository ships the Psyduck film, so the home page works on a fresh container. Private projects, uploads, sessions and payment records stay out of it.</li>
+      </ul>
+      <h3>Still to decide or verify</h3>
+      <ul>
+        <li><b>Storage.</b> The container's disk is temporary and counts against memory. Films are lost on stop, idle stop or redeploy. For a demo, disable idle stop; for real use, keep runs in object storage or publish delivered sites (for example to IPFS).</li>
+        <li><b>Background CPU.</b> Renders keep running after the request that started them returns. Whether the runtime gives CPU to background work between requests has to be checked on a first deploy.</li>
+        <li><b>Token renewal.</b> The injected agent token lasts about two hours. A vault-backed agent key avoids relying on how renewal reaches a long-running process.</li>
+      </ul>
+      <h3>Steps</h3>
+      <ol class="steps">
+        <li>Push the repository to a git host the runtime can clone.</li>
+        <li>Create a <code>python</code> runtime, <code>medium</code>, bound to the <code>studio</code> agent, from that repository, with the start command <code>HOST=0.0.0.0 python app/server.py</code>, idle timeout <code>0</code> and the environment above.</li>
+        <li>Turn on <b>Expose HTTP</b> with a slug and <b>public</b> inbound auth in the dashboard (the CLI has no flag for it), then open <code>https://{slug}.run.1claw.co</code>.</li>
+      </ol>
+    </section>
+
+    <section id="gaps">
+      <h2>Known gaps</h2>
+      <ul>
+        <li>No customer payment yet: prices are quotes.</li>
+        <li>Shroud no longer routes Anthropic, Google or OpenAI models through OpenRouter (the <code>openrouter/</code> model prefix is rejected), so the roles use other providers' models.</li>
+        <li>Camera moves can drift from their end still; the join check flags it but does not refilm automatically.</li>
+        <li>Pitch reading and the typographer take 20 seconds to 2 minutes because the model looks at every image.</li>
+      </ul>
+    </section>
+  </main>
+</div>
+
+<script>
+// Highlight the section in view in the table of contents.
+(() => {
+  const links = new Map([...document.querySelectorAll("#toc a")].map((a) => [a.getAttribute("href").slice(1), a]));
+  const io = new IntersectionObserver((entries) => {
+    for (const e of entries) if (e.isIntersecting) {
+      links.forEach((a) => a.classList.remove("on"));
+      links.get(e.target.id)?.classList.add("on");
+    }
+  }, { rootMargin: "-20% 0px -70% 0px" });
+  document.querySelectorAll("main section").forEach((s) => io.observe(s));
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,3 @@
+# Frameline needs only the Python standard library, plus ffmpeg.
+# On a 1Claw runtime (no system ffmpeg, no root), this package ships a static ffmpeg build.
+imageio-ffmpeg>=0.5

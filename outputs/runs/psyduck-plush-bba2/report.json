@@ -1,0 +1,28 @@
+{
+  "name": "psyduck-plush-bba2",
+  "venice_spend_usd": 1.44,
+  "minutes": 0.9,
+  "film_seconds": 15.54,
+  "joins": [
+    {
+      "clip": "A->B",
+      "start_ssim": 0.838442,
+      "end_ssim": 0.857353,
+      "lands_on_end_frame": true
+    },
+    {
+      "clip": "B->C",
+      "start_ssim": 0.870398,
+      "end_ssim": 0.798212,
+      "lands_on_end_frame": false
+    },
+    {
+      "clip": "C->D",
+      "start_ssim": 0.806256,
+      "end_ssim": 0.610462,
+      "lands_on_end_frame": false
+    }
+  ],
+  "site": "/home/deepseek/1claw/outputs/runs/psyduck-plush-bba2/site",
+  "zip": "/home/deepseek/1claw/outputs/runs/psyduck-plush-bba2/psyduck-plush-bba2-site.zip"
+}

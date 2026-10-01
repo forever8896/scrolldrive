@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Frameline</title>
+<meta name="description" content="Scroll-driven film websites, made from a single pitch.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/textlayer.css">
+<link rel="stylesheet" href="/static/landing.css">
+</head>
+<body class="landing">
+<header class="top">
+  <a class="brand" href="/" aria-label="Frameline"><i class="ph ph-film-strip"></i><span>Frameline</span></a>
+  <a class="top-link" href="/docs">Docs</a>
+</header>
+
+<main class="home">
+  <h1 class="home-title">Websites that play like a film as you scroll.</h1>
+  <p class="home-sub">Describe what you want. Get a site with its own film, ready to publish.</p>
+
+  <figure class="window">
+    <div class="window-bar" aria-hidden="true"><span></span><span></span><span></span></div>
+    <div class="window-screen" id="screen">
+      <video id="loop" muted playsinline loop autoplay preload="auto" aria-label="An example site made with Frameline"></video>
+    </div>
+  </figure>
+
+  <a class="btn btn-primary home-cta" href="/studio">Open the studio <i class="ph ph-arrow-right"></i></a>
+</main>
+
+<script src="/textlayer.js"></script>
+<script src="/static/app.js" type="module"></script>
+</body>
+</html>

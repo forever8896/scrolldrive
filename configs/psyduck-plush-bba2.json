@@ -1,0 +1,244 @@
+{
+  "name": "psyduck-plush-bba2",
+  "type": "product",
+  "style": "",
+  "references": [
+    "/home/deepseek/1claw/outputs/uploads/8b795f06a6b2.jpg"
+  ],
+  "aspect_ratio": "16:9",
+  "video": {
+    "model": "minimax-h3-max-image-to-video",
+    "resolution": "768P",
+    "duration": 5
+  },
+  "keyframes": [
+    {
+      "id": "A",
+      "prompt": "Keep the subject from reference 1 exactly as it is (shape, colours, details): the yellow Psyduck plush with its pale cream beak, three black hair tufts and embroidered oval eyes, sitting upright, unaltered in every proportion. Wide establishing frame, 16:9, the plush small and centred-low on a dark honed-stone plinth inside a cavernous charcoal gallery room, empty space above it. Long lens from slightly low vantage, deep shadow filling the walls, one soft window key raking from the left leaving the right side in near-black, faint warm bounce on the floor. Palette of ink black, cold grey stone, the single yellow of the plush. Fine film grain, matte deep-focus texture, quiet and reverent. No readable text, no logos, no other objects.",
+      "refs": [
+        1
+      ],
+      "chain": false
+    },
+    {
+      "id": "B",
+      "prompt": "Keep the subject from reference 1 exactly as it is (shape, colours, details): the same yellow Psyduck plush, unchanged. Medium frame, 16:9, the plush now filling the lower third of the same charcoal stone room, seen from just above eye level, its cast shadow long and sharp across the plinth. Same soft directional key from the left, deeper falloff behind, a thin rim of light tracing the plush's back and hair tufts. Palette of black, ash grey and saturated plush yellow. Shallow depth of field, gentle grain, still and considered. No readable text, no logos.",
+      "refs": [
+        1
+      ],
+      "chain": true
+    },
+    {
+      "id": "C",
+      "prompt": "Keep the subject from reference 1 exactly as it is (shape, colours, details): the same yellow Psyduck plush, beak and embroidered eyes exactly as in the reference. Extreme close study, 16:9, the frame filled by the plush's head and beak in three-quarter profile, fabric nap and seam stitching visible, the background the same charcoal room dissolved into smooth black. Hard-edged single key light from upper left carving the beak, cool shadow filling the eye socket, faint specular sheen on the embroidery thread. Palette of deep black, warm yellow, cream. Macro clarity, delicate grain, tactile and severe. No readable text, no logos.",
+      "refs": [
+        1
+      ],
+      "chain": true
+    },
+    {
+      "id": "D",
+      "prompt": "Keep the subject from reference 1 exactly as it is (shape, colours, details): the same yellow Psyduck plush, identical proportions and colour. Hero hold, 16:9, the plush centred on the dark stone plinth and shot from a low reverential angle against a vast black wall, a single pool of light isolating it while the room falls away to darkness on all sides. Soft top key with a cool rim from behind, long shadow anchoring it to the floor. Palette of pure black, graphite, and the one bright yellow subject. Cinematic large-format stillness, fine grain, monumental and calm. No readable text, no logos.",
+      "refs": [
+        1
+      ],
+      "chain": true
+    }
+  ],
+  "transitions": {
+    "A-B": "One continuous slow camera move, no cuts: a measured dolly in toward the plinth combined with a slight orbit to the right, shrinking the room around the plush until it holds the lower third of the frame.",
+    "B-C": "One continuous slow camera move, no cuts: a gentle push forward and a small crane down into an extreme close study of the head and beak, the background focus dissolving into black as we arrive.",
+    "C-D": "One continuous slow camera move, no cuts: a slow pull back and rise that arcs the camera low to the floor, the plush resolving into a single lit hero object isolated against the vast dark wall."
+  },
+  "transition_prompt": "One continuous slow camera move, no cuts.",
+  "copy": {
+    "title": "KOICHA / Psyduck",
+    "tagline": "The headache persists. The value accrues.",
+    "beats": [
+      "Some conditions warrant permanent display.",
+      "Light finds the seam. Shadow finds the rest.",
+      "The migraine is the detail.",
+      "It has never known relief. It will outlast you."
+    ],
+    "acts": [
+      {
+        "from": 0.0,
+        "to": 0.14,
+        "text": "Some conditions warrant permanent display."
+      },
+      {
+        "from": 0.193,
+        "to": 0.473,
+        "text": "Light finds the seam. Shadow finds the rest."
+      },
+      {
+        "from": 0.527,
+        "to": 0.807,
+        "text": "The migraine is the detail."
+      },
+      {
+        "from": 0.86,
+        "to": 1.01,
+        "text": "It has never known relief. It will outlast you."
+      }
+    ],
+    "sections": [
+      {
+        "heading": "The Object",
+        "body": "Official Psyduck plush. Polyester fill, synthetic mohair, hand-finished seam. Height: 28cm. Weight: 340g. The headache is not included; it is implied."
+      },
+      {
+        "heading": "The Condition",
+        "body": "In the lore, Psyduck holds its skull to suppress psychic waves. Here, the pose reads as vigil. Koicha-grade concentration. The stillness of something waiting to become valuable."
+      },
+      {
+        "heading": "Acquisition",
+        "body": "Produced in numbered units. Each arrives in unmarked charcoal packaging, no certificate. Inspect by appointment. Email below."
+      }
+    ],
+    "cta": {
+      "label": "Request viewing",
+      "href": "#"
+    },
+    "voice": "Deadpan luxury, treating a headache-riddled yellow duck plush as a museum-grade artifact. The tension: this is simultaneously absurd and completely serious. No winking, no explaining the joke. The audience knows Psyduck's lore; the copy",
+    "model": "moonshotai/kimi-k2",
+    "align": "right",
+    "layout": {
+      "preset": "editorial",
+      "hero": "tr",
+      "beats": [
+        {
+          "pos": "br",
+          "size": "m",
+          "enter": "fade"
+        },
+        {
+          "pos": "mr",
+          "size": "m",
+          "enter": "rise"
+        },
+        {
+          "pos": "tr",
+          "size": "s",
+          "enter": "rise"
+        },
+        {
+          "pos": "tr",
+          "size": "l",
+          "enter": "fade"
+        }
+      ],
+      "note": "Display lines climb the right edge one height at a time, ending on the payoff at full size.",
+      "why": [
+        "low right on empty floor shadow, quiet opening of the establishing frame",
+        "mid right in the dark wall beside the plinth, step up in height as the camera settles",
+        "short line set high on the empty stone wall, completing the right-side climb",
+        "The payoff holds the right wall at full size while the plush keeps the centre."
+      ]
+    }
+  },
+  "theme": {
+    "bg": "#0B0B0C",
+    "ink": "#F2EFE9",
+    "muted": "#8C867A",
+    "accent": "#C9A227",
+    "font": "display"
+  },
+  "brief": "A cinematic luxury film presenting the Psyduck plush as a couture object: shot like a Balenciaga campaign, framed with the restraint of a Rolex editorial, and paced for collectors who drink koicha matcha. Slow, deliberate camera moves reveal the plush through soft light, deep shadow and still composition, treating it as a high-status artifact rather than a toy. The scroll plays as one continuous take, moving from a quiet establishing frame to a considered close study and a final hero hold.\nProduct: Plushie Psyduck. Mood: high fashion, high status, premium. Audience: Rolex collectors, high fashion enthusiasts, koicha matcha drinkers.",
+  "director_model": "xiaomi/mimo-v2.6-flash",
+  "budget_usd": 2.88,
+  "copy_history": [
+    {
+      "title": "KOICHA / Psyduck",
+      "tagline": "A couture study of one plush, held in still light.",
+      "acts": [
+        {
+          "from": 0.05,
+          "to": 0.33,
+          "text": "An object enters the room before it enters the frame.\nStillness first. Then the "
+        },
+        {
+          "from": 0.37,
+          "to": 0.65,
+          "text": "Closer than couture usually allows.\nSeam, nap, thread, the exact yellow."
+        },
+        {
+          "from": 0.69,
+          "to": 0.95,
+          "text": "Held, not displayed.\nThe final frame does not move."
+        }
+      ],
+      "sections": [
+        {
+          "heading": "One object, one take",
+          "body": "Psyduck is lit like a timepiece and framed like a sculpture. Four keyframes, three continuous camera moves, no cuts from establishing frame to final hold."
+        },
+        {
+          "heading": "Made for the slow hour",
+          "body": "Deep shadow, a single soft key, and a colour that survives it. Composed for the collector who measures a day in whiskered tea and quiet rooms."
+        },
+        {
+          "heading": "The hold",
+          "body": "The film ends where it should: the object alone in a pool of light, with nothing left to explain."
+        }
+      ],
+      "cta": {
+        "label": "Request the film",
+        "href": "#"
+      }
+    },
+    {
+      "title": "KOICHA / Psyduck",
+      "tagline": "The headache persists. The value accrues.",
+      "beats": [
+        "Some conditions warrant permanent display.",
+        "Light finds the seam. Shadow finds the rest.",
+        "The migraine is the detail.",
+        "It has never known relief. It will outlast you."
+      ],
+      "acts": [
+        {
+          "from": 0.0,
+          "to": 0.14,
+          "text": "Some conditions warrant permanent display."
+        },
+        {
+          "from": 0.193,
+          "to": 0.473,
+          "text": "Light finds the seam. Shadow finds the rest."
+        },
+        {
+          "from": 0.527,
+          "to": 0.807,
+          "text": "The migraine is the detail."
+        },
+        {
+          "from": 0.86,
+          "to": 1.01,
+          "text": "It has never known relief. It will outlast you."
+        }
+      ],
+      "sections": [
+        {
+          "heading": "The Object",
+          "body": "Official Psyduck plush. Polyester fill, synthetic mohair, hand-finished seam. Height: 28cm. Weight: 340g. The headache is not included; it is implied."
+        },
+        {
+          "heading": "The Condition",
+          "body": "In the lore, Psyduck holds its skull to suppress psychic waves. Here, the pose reads as vigil. Koicha-grade concentration. The stillness of something waiting to become valuable."
+        },
+        {
+          "heading": "Acquisition",
+          "body": "Produced in numbered units. Each arrives in unmarked charcoal packaging, no certificate. Inspect by appointment. Email below."
+        }
+      ],
+      "cta": {
+        "label": "Request viewing",
+        "href": "#"
+      },
+      "voice": "Deadpan luxury, treating a headache-riddled yellow duck plush as a museum-grade artifact. The tension: this is simultaneously absurd and completely serious. No winking, no explaining the joke. The audience knows Psyduck's lore; the copy",
+      "model": "moonshotai/kimi-k2",
+      "align": "right"
+    }
+  ]
+}
