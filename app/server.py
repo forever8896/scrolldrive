@@ -128,6 +128,22 @@ def prices():
     return {k: v for k, v in PRICES.items() if k != "at"}
 
 
+def customer_prices():
+    """What a site costs the customer, by quality and number of camera moves. Generation
+    costs stay on the server."""
+    p = prices()
+    return {"prices": {res: {n: director.studio_price((n + 1) * p["image_usd"] + n * p["clip_usd"][res])
+                             for n in range(director.MIN_SCENES, director.MAX_SCENES + 1)}
+                       for res in ("768P", "1080P")}}
+
+
+def customer_error(msg):
+    """Errors shown in the studio never carry generation costs."""
+    if "budget" in msg:
+        return "This film has used all of its reshoots."
+    return re.sub(r"\s*\(?\$[0-9.]+\)?", "", msg)
+
+
 # --- payment ---------------------------------------------------------------------------------
 
 def used_txs():
@@ -212,7 +228,7 @@ def last_error(job):
         return "the render log is missing"
     for line in reversed(lines):
         if "Stopped:" in line:
-            return line.split("Stopped:", 1)[1].strip()[:300]
+            return customer_error(line.split("Stopped:", 1)[1].strip()[:300])
     tail = [l for l in lines if l.strip() and not l.startswith("EXIT")][-1:]
     return (tail[0] if tail else "the render stopped")[:300]
 
@@ -269,8 +285,6 @@ def board_view(name):
     return {
         "name": name, "type": cfg.get("type"), "copy": cfg.get("copy", {}), "theme": cfg.get("theme", {}),
         "keyframes": kfs, "moves": moves, "resolution": res,
-        "cost": {"keyframes_usd": round(n * p["image_usd"], 2), "film_usd": round((n - 1) * p["clip_usd"][res], 2),
-                 "image_usd": p["image_usd"], "clip_usd": p["clip_usd"][res]},
         "price_usd": director.studio_price(n * p["image_usd"] + (n - 1) * p["clip_usd"][res]),
         "site": f"{run_url(site)}?v={int(os.path.getmtime(site))}" if os.path.exists(site) else None,
         "zip": run_url(zip_path) if os.path.exists(zip_path) else None,
@@ -301,16 +315,14 @@ LINE_PATTERNS = [
     (re.compile(r"Keyframe (\w): (\S+) on Venice"), lambda m: {"type": "kf_start", "id": m[1]}),
     (re.compile(r"Keyframe (\w): (/\S+)$"), lambda m: {"type": "kf_done", "id": m[1], "url": run_url(m[2])}),
     (re.compile(r"Clip (\w)->(\w): (\S+) (\S+) (\S+), first->last frame \(\$([0-9.]+)\)"),
-     lambda m: {"type": "clip_start", "from": m[1], "to": m[2], "usd": float(m[6])}),
+     lambda m: {"type": "clip_start", "from": m[1], "to": m[2]}),
     (re.compile(r"clip (\w)->(\w): (\w+); checking"), lambda m: {"type": "clip_wait", "from": m[1], "to": m[2]}),
     (re.compile(r"Clip (\w)->(\w): (/\S+\.mp4)$"),
      lambda m: {"type": "clip_done", "from": m[1], "to": m[2], "url": run_url(m[3])}),
     (re.compile(r"Join check (\w)->(\w): .*end SSIM ([0-9.]+|n/a) -> (.+)$"),
      lambda m: {"type": "join", "from": m[1], "to": m[2], "ssim": m[3], "ok": "DOES NOT" not in m[4]}),
-    (re.compile(r"(?:Done\. Venice spend this run|Keyframes ready\. Venice spend so far): \$([0-9.]+)"),
-     lambda m: {"type": "spend", "usd": float(m[1])}),
     (re.compile(r"Site:\s+(\S+)"), lambda m: {"type": "site", "url": run_url(m[1])}),
-    (re.compile(r"Stopped: (.+)"), lambda m: {"type": "error", "message": m[1][:300]}),
+    (re.compile(r"Stopped: (.+)"), lambda m: {"type": "error", "message": customer_error(m[1][:300])}),
 ]
 
 
@@ -401,12 +413,11 @@ def list_runs():
 
 
 def showcase():
-    """The landing page's film, with its real making-of: pitch, shots, moves, words, bill."""
+    """The home page's example film: its media, words, layout and shots."""
     name = SHOWCASE
     cfg, rd = load_cfg(name), run_dir(name)
     report = json.load(open(os.path.join(rd, "report.json")))
     joins = {j["clip"].replace("->", "-"): j for j in report.get("joins", [])}
-    p = prices()
     kfs = [{"id": k["id"], "url": run_url(scrollsite.keyframe_path(rd, k["id"])),
             "gist": copywriter.shot_gist(k["prompt"]), "refs": bool(k.get("refs")), "chain": k.get("chain")}
            for k in cfg["keyframes"]]
@@ -414,18 +425,6 @@ def showcase():
               "prompt": cfg["transitions"].get(f"{a['id']}-{b['id']}", "").replace("One continuous slow camera move, no cuts: ", ""),
               "ssim": joins.get(f"{a['id']}-{b['id']}", {}).get("end_ssim")}
              for a, b in zip(cfg["keyframes"], cfg["keyframes"][1:])]
-    res = cfg["video"].get("resolution", "768P")
-    bill = [{"item": f"Keyframe {k['id']}", "detail": "Nano Banana Pro, Venice", "usd": p["image_usd"]} for k in kfs]
-    bill += [{"item": f"Move {m['id'].replace('-', ' to ')}", "detail": f"MiniMax H3 Max {res}, Venice", "usd": p["clip_usd"][res]}
-             for m in moves]
-    topup = None
-    try:
-        for line in open(x402pay.LOG):
-            e = json.loads(line)
-            if e.get("label", "").startswith("venice top-up") and e.get("status") == 200:
-                topup = {"usd": float(e["usd"]), "ts": e["ts"], "pay_to": e.get("pay_to")}
-    except (OSError, ValueError):
-        pass
     voices_path = os.path.join(rd, "voices.json")
     return {
         "name": name, "pitch": cfg.get("brief", "").split("\n")[0], "copy": cfg["copy"],
@@ -433,7 +432,7 @@ def showcase():
         "film": run_url(os.path.join(rd, "site", "film.mp4")), "film_mobile": run_url(os.path.join(rd, "site", "film-mobile.mp4")),
         "poster": run_url(os.path.join(rd, "site", "poster.jpg")), "site": run_url(os.path.join(rd, "site", "index.html")),
         "duration": report.get("film_seconds"), "minutes": report.get("minutes"),
-        "keyframes": kfs, "moves": moves, "bill": bill, "total_usd": round(sum(b["usd"] for b in bill), 2), "topup": topup,
+        "keyframes": kfs, "moves": moves,
         "director_model": cfg.get("director_model"), "copy_model": cfg["copy"].get("model"),
         "voices": json.load(open(voices_path)) if os.path.exists(voices_path) else [],
     }
@@ -526,7 +525,7 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/showcase":
                 return self.send_json(showcase())
             if p == "/api/prices":
-                return self.send_json(prices())
+                return self.send_json(customer_prices())
             if p == "/api/session":
                 s = self.session(q)
                 return self.send_json(view(s)) if s else self.send_json({"error": "Unknown session."}, 404)

@@ -48,7 +48,7 @@
       <div class="facts">
         <div><span>Input</span>A pitch in plain words, plus up to 6 images</div>
         <div><span>Output</span>A static site (zip) with a scroll-scrubbed film, ready for any host</div>
-        <div><span>Typical cost to the agent</span>$2.16 for a 3-move film at 768p (Venice prices, October 2026)</div>
+        <div><span>Price</span>From $5 for a complete site, paid once in USDC</div>
         <div><span>Typical time</span>About 1 to 3 minutes of rendering</div>
       </div>
     </section>
@@ -144,10 +144,10 @@
     <section id="generation">
       <h2>Generation</h2>
       <table>
-        <thead><tr><th>Asset</th><th>Model on Venice</th><th>Cost</th><th>Notes</th></tr></thead>
+        <thead><tr><th>Asset</th><th>Model on Venice</th><th>Notes</th></tr></thead>
         <tbody>
-          <tr><td>Keyframe</td><td>Nano Banana Pro (edit or generate)</td><td>$0.18</td><td>Composed from your images and the previous still, so the subject and world stay consistent</td></tr>
-          <tr><td>Camera move</td><td>MiniMax H3 Max, image to video</td><td>$0.48 at 768p, $0.96 at 1080p (was half that in September 2026)</td><td>5 seconds, starts on one still and is told to end on the next (first and last frame)</td></tr>
+          <tr><td>Keyframe</td><td>Nano Banana Pro (edit or generate)</td><td>Composed from your images and the previous still, so the subject and world stay consistent</td></tr>
+          <tr><td>Camera move</td><td>MiniMax H3 Max, image to video, 768p or 1080p</td><td>5 seconds, starts on one still and is told to end on the next (first and last frame)</td></tr>
         </tbody>
       </table>
       <ul>
@@ -202,7 +202,7 @@
 
     <section id="pricing">
       <h2>Pricing and payment</h2>
-      <p>A site costs $1 plus 2.5 times its live render cost, rounded up to $0.50: <b>$6.50</b> for three camera moves at 768p (render cost $2.16) and $10.00 at 1080p, at October 2026 prices. Prices are read live from Venice, so the price follows them. It is paid once before anything is generated and covers the stills, any redos within the run's budget, the film, the words and the site. A run can spend at most twice its quote, so the price always covers the worst case. Both numbers are settings (<code>PRICE_FEE_USD</code>, <code>PRICE_MULTIPLIER</code>).</p>
+      <p>A site is priced by its length and quality, from <b>$5</b> for two camera moves at 768p. It is paid once before anything is generated and covers the stills, reshoots, the film, the words and the site. The studio shows only the customer's price; generation costs stay on the server, and the price is set with a margin that covers a run's worst case.</p>
       <ol class="steps">
         <li><b>Connect a wallet</b> at the storyboard. The studio asks the server whether it is an owner wallet.</li>
         <li><b>Customers pay</b> in USDC on Base, straight to the studio agent's wallet (<code>0x9e55…343e</code>): one ERC-20 transfer from their own wallet. Without a browser wallet, they can send from any wallet and paste the transaction hash.</li>
@@ -236,7 +236,7 @@
           <tr><td><code>POST /api/layout</code></td><td>Typographer layout with a note</td></tr>
           <tr><td><code>POST /api/undo</code></td><td>Restore the words and layout before the last agent change</td></tr>
           <tr><td><code>POST /api/open</code></td><td>Open a finished film for editing (<code>/studio?run=name</code>)</td></tr>
-          <tr><td><code>GET /api/prices</code></td><td>Live Venice prices and the studio's price formula</td></tr>
+          <tr><td><code>GET /api/prices</code></td><td>The customer price for each length and quality</td></tr>
           <tr><td><code>GET /api/status</code></td><td>Wallet USDC and Venice balance</td></tr>
         </tbody>
       </table>

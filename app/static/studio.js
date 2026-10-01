@@ -356,22 +356,14 @@ function segmented(el, items, value, onPick) {
 }
 
 function priceFor(scenes, res) {
-  if (!prices) return null;
-  const img = prices.image_usd * (scenes + 1);
-  const film = prices.clip_usd[res] * scenes;
-  // Same rule as the server: a small fee plus a multiple of the render cost, rounded up to $0.50.
-  const price = Math.ceil((prices.fee_usd + prices.multiplier * (img + film)) * 2) / 2;
-  return { price, cost: img + film, img, film };
+  return prices?.prices?.[res]?.[scenes] ?? null;
 }
 
 function updatePrice() {
   const c = V.controls;
   $("#len-val").textContent = `${c.scenes} moves, about ${c.scenes * 5} seconds`;
-  const p = priceFor(c.scenes, c.resolution);
-  if (!p) return;
-  $("#p-price").textContent = usd(p.price);
-  $("#p-cost").textContent = usd(p.cost);
-  $("#p-cost-label").textContent = `Agent's cost: ${usd(p.img)} stills, ${usd(p.film)} film`;
+  const price = priceFor(c.scenes, c.resolution);
+  if (price != null) $("#p-price").textContent = usd(price);
 }
 
 const FIELD_LABELS = [["name", "Name"], ["subject", "Subject"], ["mood", "Mood"], ["audience", "For"], ["goal", "Visitors should"]];
@@ -534,7 +526,7 @@ function openRedo(frame, k) {
   p.className = "redo-panel";
   p.innerHTML = `<label>Change what you want in this shot, then reshoot it</label><textarea rows="6"></textarea>
     <div class="redo-actions"><button type="button" class="link-btn">Cancel</button>
-    <button class="btn btn-primary btn-sm">Reshoot ${usd(V.board.cost.image_usd)}</button></div>`;
+    <button class="btn btn-primary btn-sm">Reshoot</button></div>`;
   p.querySelector("textarea").value = k.prompt;
   p.querySelector(".link-btn").addEventListener("click", () => p.remove());
   p.addEventListener("submit", async (e) => {
@@ -542,7 +534,7 @@ function openRedo(frame, k) {
     try {
       const v = await api("/api/redo", { session: V.id, id: k.id, prompt: p.querySelector("textarea").value });
       p.remove();
-      ledger(`Reshoot keyframe ${k.id}`, usd(V.board.cost.image_usd));
+      ledger(`Reshooting keyframe ${k.id}`);
       say(`Reshooting keyframe ${k.id}. The camera moves around it will be filmed from the new still.`);
       render(v);
     } catch (err) { say(`Could not reshoot: ${err.message}`, "warn"); }
@@ -591,8 +583,8 @@ function renderGate() {
     $("#gate-title").textContent = missing ? "Some stills are missing" : "Happy with the stills?";
     $("#gate-body").textContent = missing
       ? "Reshoot the missing ones, or go back to the storyboard."
-      : `Redo any shot you do not love. Then the camera moves are filmed between them (${usd(b.cost.film_usd)}) and the copywriter writes the words.`;
-    go.innerHTML = `Film it ${usd(b.cost.film_usd)} <i class="ph ph-film-reel"></i>`;
+      : "Redo any shot you do not love. Then the camera moves are filmed between them and the copywriter writes the words.";
+    go.innerHTML = `Film it <i class="ph ph-film-reel"></i>`;
     go.disabled = missing;
     back.innerHTML = `<i class="ph ph-arrow-left"></i> Back to the storyboard`;
     back.hidden = true;
@@ -699,14 +691,14 @@ $("#gate-go").addEventListener("click", async () => {
     }
     if (V.phase === "board") {
       const v = await api("/api/shoot", { session: V.id, approve: true });
-      ledger("Keyframes approved by you", usd(V.board.cost.keyframes_usd));
+      ledger("Keyframes approved by you");
       say("Shooting the stills now. Each one lands here as it is made.");
       render(v);
     } else if (V.phase === "keyframes") {
       go.innerHTML = `Writing the words <i class="ph ph-pen-nib"></i>`;
       say("The copywriter is writing the words from your stills. The camera rolls right after.");
       const v = await api("/api/film", { session: V.id, approve: true });
-      ledger("Film approved by you", usd(V.board.cost.film_usd));
+      ledger("Film approved by you");
       say("Filming the camera moves. Each one starts on one still and lands exactly on the next.");
       render(v);
     }
@@ -739,7 +731,7 @@ function follow() {
     if (seen.has(key) && ev.type !== "finished") return;
     seen.add(key);
     switch (ev.type) {
-      case "kf_start": { const f = q(ev.id); if (f) setMedia(f, "pending"); ledger(`Keyframe ${ev.id}: Nano Banana Pro on Venice`, usd(V.board.cost.image_usd)); break; }
+      case "kf_start": { const f = q(ev.id); if (f) setMedia(f, "pending"); ledger(`Shooting keyframe ${ev.id}`); break; }
       case "kf_done": {
         const f = q(ev.id); if (!f) break;
         setMedia(f, "img", ev.url);
@@ -748,7 +740,7 @@ function follow() {
         setProgress(progressNow());
         break;
       }
-      case "clip_start": { const f = q(`${ev.from}-${ev.to}`); if (f) setMedia(f, "working"); ledger(`Move ${ev.from} to ${ev.to}: H3 Max, first to last frame`, usd(ev.usd)); break; }
+      case "clip_start": { const f = q(`${ev.from}-${ev.to}`); if (f) setMedia(f, "working"); ledger(`Filming move ${ev.from} to ${ev.to}`); break; }
       case "clip_done": {
         const f = q(`${ev.from}-${ev.to}`); if (!f) break;
         setMedia(f, "video", ev.url);
@@ -764,11 +756,9 @@ function follow() {
         j.classList.toggle("bad", !ev.ok);
         break;
       }
-      case "spend": ledger("Venice spend this run", usd(ev.usd)); break;
       case "error": ledger(`Stopped: ${ev.message}`); break;
       case "finished": {
         events.close(); events = null;
-        loadBalance();
         const v = ev.view;
         if (v.phase === "keyframes" && !v.error) say("The stills are in. Redo any you do not love, then film it.");
         if (v.phase === "deliver") { setProgress(1); say("Done. Click any words in the preview to change them, or ask for a rewrite."); }
@@ -1102,16 +1092,6 @@ $("#undo-btn").addEventListener("click", async () => {
   } catch (e) { say(`Could not undo: ${e.message}`, "warn"); }
 });
 
-/* ---------------- balance ---------------- */
-async function loadBalance() {
-  try {
-    const s = await api("/api/status");
-    const text = s.venice_usd != null ? `Venice ${usd(s.venice_usd)}` : "Balance";
-    const el = $("#balance-text");
-    if (el.textContent !== text) { el.textContent = text; $("#balance").classList.remove("bump"); void $("#balance").offsetWidth; $("#balance").classList.add("bump"); }
-  } catch { /* leave the label */ }
-}
-
 /* ---------------- new film ---------------- */
 $("#new-btn").addEventListener("click", async () => {
   if (events) { events.close(); events = null; }
@@ -1129,7 +1109,6 @@ const TOUR = [
   { title: "Welcome to the studio", body: "Pitch any site: a product, your portfolio, an event, something strange. An agent turns it into a scroll film with words. This shows the path." },
   { target: "#pitch-box", title: "Pitch it in one go", body: "Say what it is and how it should feel. Add images when your subject must look exactly right. If you say enough, you skip every question." },
   { target: "#stepper", title: "Approve twice", body: "First the storyboard and its stills, which you can redo shot by shot. Then the film. Nothing is paid until you approve each step." },
-  { target: "#balance", title: "The agent pays its own way", body: "Renders are paid from the agent's Venice balance, topped up from its 1Claw wallet within the limits you set there." },
   { target: "#agent-line", title: "Then make the words yours", body: "The copywriter writes the site once the stills exist. Click any line in the preview to change it, or ask for a rewrite. You can close the tab at any time; your film waits here.", last: true },
 ];
 let tourIdx = 0;
@@ -1177,7 +1156,6 @@ addEventListener("keydown", (e) => {
 /* ---------------- boot: resume whatever this browser was doing ---------------- */
 (async () => {
   api("/api/prices").then((p) => { prices = p; if (V?.phase === "confirm") updatePrice(); }).catch(() => {});
-  loadBalance();
   let run = new URLSearchParams(location.search).get("run");
   let v = null;
   try {
