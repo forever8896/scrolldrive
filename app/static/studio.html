@@ -171,6 +171,16 @@
             <a class="btn btn-primary btn-sm" id="download-zip">Download zip <i class="ph ph-download-simple"></i></a>
           </div>
         </div>
+        <section class="moves" aria-label="Camera moves">
+          <div class="moves-head"><span>Camera moves</span><span class="moves-left" id="refilms-left"></span></div>
+          <div class="moves-row" id="moves-row"></div>
+          <form class="refilm-panel" id="refilm-panel" hidden>
+            <label for="refilm-prompt" id="refilm-label"></label>
+            <textarea id="refilm-prompt" rows="3"></textarea>
+            <div class="redo-actions"><button type="button" class="link-btn" id="refilm-cancel">Cancel</button>
+              <button class="btn btn-primary btn-sm" id="refilm-go">Refilm this move</button></div>
+          </form>
+        </section>
       </div>
       <aside class="words" aria-label="The words on your site">
         <div class="words-head">

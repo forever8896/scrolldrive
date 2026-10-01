@@ -515,8 +515,12 @@ function redoControls(frame, k) {
   if (V.phase !== "keyframes" || !k.url) return;
   const r = document.createElement("div");
   r.className = "redo";
+  const left = V.allowance?.reshoots ?? 0;
   r.innerHTML = `<button class="redo-btn" type="button"><i class="ph ph-arrow-clockwise"></i> Redo</button>`;
-  r.querySelector("button").addEventListener("click", () => openRedo(frame, k));
+  const btn = r.querySelector("button");
+  btn.disabled = left < 1;
+  btn.title = left < 1 ? "No reshoots left for this film" : `${left} reshoot${left === 1 ? "" : "s"} left`;
+  btn.addEventListener("click", () => openRedo(frame, k));
   frame.querySelector(".media").append(r);
 }
 
@@ -526,7 +530,7 @@ function openRedo(frame, k) {
   p.className = "redo-panel";
   p.innerHTML = `<label>Change what you want in this shot, then reshoot it</label><textarea rows="6"></textarea>
     <div class="redo-actions"><button type="button" class="link-btn">Cancel</button>
-    <button class="btn btn-primary btn-sm">Reshoot</button></div>`;
+    <button class="btn btn-primary btn-sm">Reshoot (${V.allowance?.reshoots ?? 0} left)</button></div>`;
   p.querySelector("textarea").value = k.prompt;
   p.querySelector(".link-btn").addEventListener("click", () => p.remove());
   p.addEventListener("submit", async (e) => {
@@ -583,7 +587,7 @@ function renderGate() {
     $("#gate-title").textContent = missing ? "Some stills are missing" : "Happy with the stills? Approve them to film";
     $("#gate-body").textContent = missing
       ? "Reshoot the missing ones, or go back to the storyboard."
-      : "Already paid: nothing more to pay. Redo any shot you do not love, then approve and the camera moves are filmed between them while the words are written.";
+      : `Already paid: nothing more to pay. Redo any shot you do not love (${V.allowance?.reshoots ?? 0} reshoot${V.allowance?.reshoots === 1 ? "" : "s"} left), then approve and the camera moves are filmed between them while the words are written.`;
     go.innerHTML = `Approve and film <i class="ph ph-film-reel"></i>`;
     go.disabled = missing;
     back.innerHTML = `<i class="ph ph-arrow-left"></i> Back to the storyboard`;
@@ -783,12 +787,74 @@ function renderDeliver(changed) {
   $("#open-site").href = b.site;
   $("#download-zip").href = b.zip || "#";
   buildWordFields();
+  renderMoves();
   const frame = $("#result-frame");
   frame.onload = wireFrame;
   frame.src = b.site;
   $("#save-state").textContent = "";
   voice();
 }
+
+// Each camera move as a small looping tile; any can be filmed again with a new direction.
+function renderMoves() {
+  const left = V.allowance?.refilms ?? 0;
+  $("#refilms-left").textContent = left ? `${left} refilm${left === 1 ? "" : "s"} left` : "No refilms left";
+  $("#refilm-panel").hidden = true;
+  const row = $("#moves-row");
+  row.innerHTML = "";
+  V.board.moves.forEach((m) => {
+    const t = document.createElement("div");
+    t.className = `move-tile${m.lands === false ? " drifts" : ""}`;
+    t.innerHTML = `<video muted playsinline loop preload="metadata"></video>
+      <div class="move-meta"><b></b>${m.lands === false ? '<span class="drift"><i class="ph ph-warning"></i> Check the landing</span>' : ""}</div>
+      <button class="link-btn refilm-btn" type="button"><i class="ph ph-film-reel"></i> Refilm</button>`;
+    const v = t.querySelector("video");
+    v.poster = V.board.keyframes.find((k) => k.id === m.from)?.url || "";
+    if (m.url) v.src = m.url;
+    t.querySelector("b").textContent = `${m.from} to ${m.to}`;
+    t.addEventListener("mouseenter", () => { if (!reduceMotion) v.play().catch(() => {}); });
+    t.addEventListener("mouseleave", () => v.pause());
+    const btn = t.querySelector(".refilm-btn");
+    btn.disabled = left < 1;
+    btn.addEventListener("click", () => openRefilm(m));
+    row.append(t);
+  });
+}
+
+let refilmMove = null;
+function openRefilm(m) {
+  refilmMove = m;
+  $("#refilm-label").textContent = `How should the camera travel from ${m.from} to ${m.to}? Change it, or keep it and simply refilm.`;
+  $("#refilm-prompt").value = m.prompt.replace(/^One continuous slow camera move, no cuts:\s*/i, "");
+  $("#refilm-panel").hidden = false;
+  enter($("#refilm-panel"), { opacity: 0, transform: "translateY(-6px)" });
+  $("#refilm-prompt").focus({ preventScroll: true });
+}
+$("#refilm-cancel").addEventListener("click", () => { $("#refilm-panel").hidden = true; });
+$("#refilm-panel").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const m = refilmMove;
+  if (!m) return;
+  $("#refilm-go").disabled = true;
+  try {
+    const body = { session: V.id, id: m.id, prompt: $("#refilm-prompt").value };
+    let v;
+    try { v = await api("/api/refilm", body); }
+    catch (err) {
+      // A film opened by link has no payment in this session: the owner wallet can sign in here.
+      if (!/payment/i.test(err.message)) throw err;
+      say("Sign in with the studio owner's wallet to refilm this film.");
+      if (!(await connectWallet()) || !wallet.owner) throw new Error("only the paid session or the owner wallet can refilm this film");
+      await ownerSignIn();
+      v = await api("/api/refilm", body);
+    }
+    ledger(`Refilming move ${m.from} to ${m.to}`);
+    say(`Refilming the move from ${m.from} to ${m.to}. Your words and layout stay as they are.`);
+    copy = null;
+    render(v);
+  } catch (err) { say(`Could not refilm: ${err.message}`, "warn"); }
+  finally { $("#refilm-go").disabled = false; }
+});
 
 function voice() {
   const parts = [copy.voice && `Voice: ${copy.voice}`, copy.layout?.note && `Type: ${copy.layout.note}`].filter(Boolean);

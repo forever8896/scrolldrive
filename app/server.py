@@ -57,7 +57,7 @@ OWNER_WALLETS = {a.strip().lower() for a in os.environ.get(
 # Accepted payments live in 1Claw Agent Memory (scripts/ledger.py), so a transaction unlocks
 # one film ever, across restarts, redeploys, and the runtime and local studio alike.
 PAYMENT_MAX_AGE_HOURS = float(os.environ.get("PAYMENT_MAX_AGE_HOURS", 24))
-PAID_STEPS = {"/api/shoot", "/api/redo", "/api/film"}
+PAID_STEPS = {"/api/shoot", "/api/redo", "/api/film", "/api/refilm"}
 # Optional owner pass for paid steps (header X-Studio-Code), e.g. for scripts.
 ACCESS_CODE = os.environ.get("STUDIO_ACCESS_CODE", "")
 # The AI steps are free to try but rate limited per visitor, to protect the LLM quota.
@@ -158,6 +158,24 @@ def price_usd(s):
     return director.studio_price(n * p["image_usd"] + (n - 1) * p["clip_usd"][cfg["video"].get("resolution", "768P")])
 
 
+def allowance(name):
+    """How many reshoots or refilms the film's budget still covers, after holding back
+    the cost of everything it still needs (missing stills, moves not filmed yet). Counts
+    only: the customer never sees costs."""
+    cfg = load_cfg(name)
+    rd = run_dir(name)
+    p = prices()
+    img, clip = p["image_usd"], p["clip_usd"][cfg["video"].get("resolution", "768P")]
+    try:
+        spent = float(json.load(open(os.path.join(rd, "venice-state.json")))["spent_usd"])
+    except (OSError, ValueError, KeyError):
+        spent = 0.0
+    b = board_view(name)
+    needed = sum(img for k in b["keyframes"] if not k["url"]) + sum(clip for m in b["moves"] if not m["url"])
+    spare = max(0.0, float(cfg.get("budget_usd", 0)) - spent - needed)
+    return {"reshoots": int((spare + 1e-9) // img), "refilms": int((spare + 1e-9) // clip)}
+
+
 def is_paid(s):
     pay = s.get("payment") or {}
     return pay.get("kind") == "owner" or (pay.get("kind") == "usdc" and pay.get("board") == s.get("name"))
@@ -199,19 +217,19 @@ def any_running():
     return any(s.get("job") and job_state(s["job"])[0] for s in SESSIONS.values())
 
 
-def launch(s, stage, only=None):
+def launch(s, stage, only=None, refilm=None):
     name = s["name"]
     os.makedirs(run_dir(name), exist_ok=True)
     log = os.path.join(run_dir(name), f"job-{stage}-{int(time.time())}.log")
     args = [sys.executable, "-u", os.path.join(ROOT, "scripts", "scrollsite.py"), cfg_path(name), "--yes",
-            "--stage", stage] + (["--only", only] if only else [])
+            "--stage", stage] + (["--only", only] if only else []) + (["--refilm", refilm] if refilm else [])
     cmd = " ".join(f"'{a}'" for a in args) + '; echo "EXIT $?"'
     out = open(log, "w")
     # Own session: the render survives a server restart and a closed tab.
     proc = subprocess.Popen(["sh", "-c", cmd], cwd=ROOT, stdout=out, stderr=subprocess.STDOUT,
                             start_new_session=True)
     threading.Thread(target=proc.wait, daemon=True).start()  # reap, so pid checks stay truthful
-    s["job"] = {"stage": stage, "log": log, "pid": proc.pid, "only": only, "started": time.time()}
+    s["job"] = {"stage": stage, "log": log, "pid": proc.pid, "only": only, "refilm": refilm, "started": time.time()}
     s["error"] = None
     s["phase"] = "shooting" if stage == "keyframes" else "filming"
     save(s)
@@ -251,7 +269,7 @@ def settle(s):
                                         for k in load_cfg(s["name"])["keyframes"])
             s["phase"] = "keyframes" if job.get("only") or has_all else "board"
         else:
-            s["phase"] = "keyframes"
+            s["phase"] = "deliver" if job.get("refilm") else "keyframes"  # a failed refilm keeps the film
     save(s)
 
 
@@ -266,6 +284,10 @@ def board_view(name):
         path = scrollsite.keyframe_path(rd, k["id"]) if os.path.isdir(rd) else None
         mt[k["id"]] = os.path.getmtime(path) if path else None
         kfs.append({**k, "url": f"{run_url(path)}?v={int(mt[k['id']])}" if path else None})
+    try:
+        joins = {j["clip"].replace("->", "-"): j for j in json.load(open(os.path.join(rd, "report.json"))).get("joins", [])}
+    except (OSError, ValueError):
+        joins = {}
     moves = []
     for a, b in zip(cfg["keyframes"], cfg["keyframes"][1:]):
         key = f"{a['id']}-{b['id']}"
@@ -273,7 +295,8 @@ def board_view(name):
         fresh = os.path.exists(clip) and mt[a["id"]] and mt[b["id"]] and \
             os.path.getmtime(clip) > max(mt[a["id"]], mt[b["id"]])
         moves.append({"id": key, "from": a["id"], "to": b["id"], "prompt": cfg["transitions"].get(key, ""),
-                      "url": f"{run_url(clip)}?v={int(os.path.getmtime(clip))}" if fresh else None})
+                      "url": f"{run_url(clip)}?v={int(os.path.getmtime(clip))}" if fresh else None,
+                      "lands": joins.get(key, {}).get("lands_on_end_frame") if fresh else None})
     res = cfg["video"].get("resolution", "768P")
     n = len(cfg["keyframes"])
     site = os.path.join(rd, "site", "index.html")
@@ -297,6 +320,7 @@ def view(s):
         out["job"] = {"stage": s["job"]["stage"], "running": running, "code": code, "only": s["job"].get("only")}
     if s.get("name") and os.path.exists(cfg_path(s["name"])):
         out["board"] = board_view(s["name"])
+        out["allowance"] = allowance(s["name"])
         usd = price_usd(s)
         out["pay"] = {"paid": is_paid(s), "to": PAY_TO, "token": USDC, "chain_id": CHAIN_ID,
                       "amount_usd": usd, "amount_units": int(round(usd * 1e6))}
@@ -550,7 +574,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"error": "Unknown session. Reload the page."}, 400)
             handler = {"/api/ref/remove": self.api_ref_remove, "/api/intake": self.api_intake,
                        "/api/answer": self.api_answer, "/api/storyboard": self.api_storyboard,
-                       "/api/shoot": self.api_shoot, "/api/redo": self.api_redo, "/api/film": self.api_film,
+                       "/api/shoot": self.api_shoot, "/api/redo": self.api_redo, "/api/refilm": self.api_refilm, "/api/film": self.api_film,
                        "/api/copy": self.api_copy, "/api/layout": self.api_layout, "/api/undo": self.api_undo, "/api/rewrite": self.api_rewrite, "/api/back": self.api_back,
                        "/api/pay/challenge": self.api_pay_challenge, "/api/pay/owner": self.api_pay_owner,
                        "/api/pay/confirm": self.api_pay_confirm}.get(p)
@@ -761,12 +785,12 @@ class Handler(BaseHTTPRequestHandler):
         save(s)
         return self.send_json(view(s))
 
-    def start(self, s, stage, only=None):
+    def start(self, s, stage, only=None, refilm=None):
         cfg = load_cfg(s["name"])
         p = prices()
         n = len(cfg["keyframes"])
-        need = (p["image_usd"] * (1 if only else n) if stage == "keyframes"
-                else p["clip_usd"][cfg["video"].get("resolution", "768P")] * (n - 1))
+        clip = p["clip_usd"][cfg["video"].get("resolution", "768P")]
+        need = (p["image_usd"] * (1 if only else n) if stage == "keyframes" else clip * (1 if refilm else n - 1))
         with LOCK:
             if any_running():
                 return self.send_json({"error": "Another film is rendering. Try again in a minute."}, 409)
@@ -775,7 +799,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:  # noqa: BLE001
                 return self.send_json({"error": "The studio's generation balance is low and the agent could not "
                                                 f"top it up: {str(e)[:200]}"}, 503)
-            launch(s, stage, only)
+            launch(s, stage, only, refilm)
             if s.get("payment"):
                 s["payment"]["used"] = True
                 save(s)
@@ -793,11 +817,37 @@ class Handler(BaseHTTPRequestHandler):
         kf = next((k for k in cfg["keyframes"] if k["id"] == data.get("id")), None)
         if not kf:
             return self.send_json({"error": "Unknown keyframe."}, 400)
+        if s["phase"] != "keyframes":
+            return self.send_json({"error": "Stills can be reshot before the film is made."}, 409)
+        if allowance(s["name"])["reshoots"] < 1:
+            return self.send_json({"error": "This film has used all of its reshoots."}, 409)
         prompt = str(data.get("prompt") or "").strip()
         if prompt:
             kf["prompt"] = re.sub(r"\s*[\u2014\u2013]\s*", ", ", prompt)[:2000]
             save_cfg(cfg)
         return self.start(s, "keyframes", only=kf["id"])
+
+    def api_refilm(self, s, data):
+        """Film one camera move again after delivery, optionally with a new direction.
+        The words and layout stay; the site and zip are rebuilt with the new move."""
+        if not s.get("name"):
+            return self.send_json({"error": "No film."}, 400)
+        if s["phase"] != "deliver":
+            return self.send_json({"error": "Moves can be refilmed once the film is made."}, 409)
+        cfg = load_cfg(s["name"])
+        move = str(data.get("id") or "").upper()
+        if move not in cfg["transitions"] and not any(f"{a['id']}-{b['id']}" == move
+                                                       for a, b in zip(cfg["keyframes"], cfg["keyframes"][1:])):
+            return self.send_json({"error": "Unknown camera move."}, 400)
+        if allowance(s["name"])["refilms"] < 1:
+            return self.send_json({"error": "This film has used all of its refilms."}, 409)
+        prompt = re.sub(r"\s*[\u2014\u2013]\s*", ", ", str(data.get("prompt") or "").strip())[:800]
+        if prompt:
+            if not prompt.lower().startswith("one continuous"):
+                prompt = "One continuous slow camera move, no cuts: " + prompt
+            cfg["transitions"][move] = prompt
+            save_cfg(cfg)
+        return self.start(s, "film", refilm=move)
 
     def api_film(self, s, data):
         if not data.get("approve") or not s.get("name"):

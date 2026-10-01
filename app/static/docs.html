@@ -61,7 +61,7 @@
         <li><b>Questions.</b> The producer infers everything it can and asks only what is missing and would change the film, one question at a time with tap-to-answer options. A rich pitch gets no questions.</li>
         <li><b>Brief.</b> The understood brief, editable in place, with controls: kind of site, look, length (2 to 6 camera moves) and quality (768p or 1080p). The price updates live.</li>
         <li><b>Storyboard.</b> The art director writes every keyframe and camera move, picks the colours and font. Nothing is generated yet.</li>
-        <li><b>Keyframes</b> <em class="pay">payment</em>. One payment for the whole site, then the stills are generated. Any one can be redone with an edited prompt.</li>
+        <li><b>Keyframes</b> <em class="pay">payment</em>. One payment for the whole site, then the stills are generated. Any one can be reshot with an edited prompt, within the film's reshoot allowance.</li>
         <li><b>Film</b> <em class="pay">approval</em>. Included in the payment. Each camera move is filmed from one still exactly onto the next. Meanwhile the copywriter writes the words and the typographer lays them out on the stills.</li>
         <li><b>Deliver.</b> A live preview of the finished site. Click any text to edit it, change the layout per line, ask the agents to rewrite or re-lay out, then download the zip.</li>
       </ol>
@@ -156,7 +156,7 @@
       </table>
       <ul>
         <li><b>Never pays twice.</b> Each step is recorded in <code>venice-state.json</code> before it is paid; a re-run resumes and only does what is missing. A redone still makes its neighbouring moves stale, and only those are filmed again.</li>
-        <li><b>Budget per run.</b> A run stops if it would exceed twice its quote, which leaves room for redos.</li>
+        <li><b>Reshoots and refilms.</b> Each film has a budget of twice its quote. What the film still needs (stills not shot, moves not filmed) is always held back, so reshoots and refilms only spend the spare and can never leave a paid film unable to finish. The studio shows how many are left as counts, never costs.</li>
         <li><b>Join check.</b> After filming, the last frame of each move is compared to the next still (SSIM on a small blurred version). A low score is flagged in the studio.</li>
         <li><b>In parallel.</b> Shot A is generated first; every other still is then generated at once, each composed from your references and from shot A, which anchors the place, light and palette. All camera moves are queued together, so the film takes about as long as its slowest move. Strange (experimental) sites keep shot-to-shot chaining, since their stills evolve one from the next.</li>
         <li><b>Polling is free.</b> Video jobs are checked every 10 seconds at no cost.</li>
@@ -191,6 +191,7 @@
         <li><b>Title position</b> on the same 3×3 grid.</li>
         <li><b>Ask the agents.</b> Type a direction ("funnier", "gallery feel", "bigger ending") and press <em>Rewrite words</em> or <em>Lay out text</em>. The typographer explains each placement in one line.</li>
         <li><b>Undo</b> steps back to the words and layout before the agents' last change.</li>
+        <li><b>Refilm a move.</b> Under the preview, every camera move plays as a small tile; moves whose last frame drifted from the next still are marked "Check the landing". Refilm any of them, keeping or rewriting how the camera travels; the site and zip are rebuilt with the new move, and the words and layout stay.</li>
       </ul>
       <p>The text layer (<code>templates/textlayer.css</code> and <code>.js</code>) is shared: the same code runs in every generated site and in the example on the home page.</p>
     </section>

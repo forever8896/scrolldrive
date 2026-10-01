@@ -458,6 +458,7 @@ def main():
     ap.add_argument("--yes", action="store_true")
     ap.add_argument("--stage", choices=["keyframes", "film", "all"], default="all")
     ap.add_argument("--only", default="", help="comma-separated keyframe ids to (re)shoot")
+    ap.add_argument("--refilm", default="", help="a camera move to film again, e.g. B-C")
     a = ap.parse_args()
     cfg = json.load(open(a.config))
     run_dir = os.path.join(ROOT, "outputs", "runs", cfg["name"])
@@ -475,6 +476,17 @@ def main():
         if a.stage == "keyframes":
             print(f"Keyframes ready. Venice spend so far: ${state.d['spent_usd']:.2f}")
             return
+        if a.refilm:
+            # Forget this move's finished clip, so it is queued and paid for again.
+            pair = a.refilm.strip().upper()
+            with state.lock:
+                for key in [k for k in state.d["steps"] if k.startswith(f"venice-clip:{pair}:")]:
+                    del state.d["steps"][key]
+                state.save()
+            old = os.path.join(run_dir, f"clip-{pair}.mp4")
+            if os.path.exists(old):
+                os.remove(old)
+            log(f"Refilming move {pair}")
         clip_list = clips(cfg, state, run_dir, budget, frames)
     except (Budget, venice.VeniceError, x402pay.Refused, RuntimeError) as e:
         raise SystemExit(f"Stopped: {e}\nRe-running resumes without paying for finished steps.")
