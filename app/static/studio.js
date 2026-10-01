@@ -559,7 +559,7 @@ function renderGate() {
   if (phase === "board" && !V.pay?.paid) {
     const price = usd(V.pay.amount_usd);
     $("#gate-title").textContent = `${price} for the whole site`;
-    $("#gate-body").textContent = "One payment covers the stills, the film, the words and your site. You still review every still before any film is made. Paid in USDC on Base, straight to the studio's own wallet.";
+    $("#gate-body").textContent = "One payment covers everything: the stills, the film, the words and your site. After the stills you approve them before the film is made, at no extra cost. Paid in USDC on Base, straight to the studio's own wallet.";
     go.innerHTML = !wallet.address ? `Connect wallet <i class="ph ph-wallet"></i>`
       : wallet.owner ? `Shoot free, you own the studio <i class="ph ph-aperture"></i>`
         : `Pay ${price} and shoot <i class="ph ph-arrow-right"></i>`;
@@ -580,11 +580,11 @@ function renderGate() {
     $("#board-status").className = "board-status";
   } else if (phase === "keyframes") {
     const missing = b.keyframes.some((k) => !k.url);
-    $("#gate-title").textContent = missing ? "Some stills are missing" : "Happy with the stills?";
+    $("#gate-title").textContent = missing ? "Some stills are missing" : "Happy with the stills? Approve them to film";
     $("#gate-body").textContent = missing
       ? "Reshoot the missing ones, or go back to the storyboard."
-      : "Redo any shot you do not love. Then the camera moves are filmed between them and the copywriter writes the words.";
-    go.innerHTML = `Film it <i class="ph ph-film-reel"></i>`;
+      : "Already paid: nothing more to pay. Redo any shot you do not love, then approve and the camera moves are filmed between them while the words are written.";
+    go.innerHTML = `Approve and film <i class="ph ph-film-reel"></i>`;
     go.disabled = missing;
     back.innerHTML = `<i class="ph ph-arrow-left"></i> Back to the storyboard`;
     back.hidden = true;
@@ -692,7 +692,7 @@ $("#gate-go").addEventListener("click", async () => {
     if (V.phase === "board") {
       const v = await api("/api/shoot", { session: V.id, approve: true });
       ledger("Keyframes approved by you");
-      say("Shooting the stills now. Each one lands here as it is made.");
+      say("Paid. Shooting the stills now; you review them before anything is filmed.");
       render(v);
     } else if (V.phase === "keyframes") {
       go.innerHTML = `Writing the words <i class="ph ph-pen-nib"></i>`;
@@ -760,7 +760,7 @@ function follow() {
       case "finished": {
         events.close(); events = null;
         const v = ev.view;
-        if (v.phase === "keyframes" && !v.error) say("The stills are in. Redo any you do not love, then film it.");
+        if (v.phase === "keyframes" && !v.error) say("The stills are in. Redo any you do not love, then approve them to film. It is already paid for.");
         if (v.phase === "deliver") { setProgress(1); say("Done. Click any words in the preview to change them, or ask for a rewrite."); }
         render(v);
         break;
@@ -1108,7 +1108,7 @@ $("#new-btn").addEventListener("click", async () => {
 const TOUR = [
   { title: "Welcome to the studio", body: "Pitch any site: a product, your portfolio, an event, something strange. An agent turns it into a scroll film with words. This shows the path." },
   { target: "#pitch-box", title: "Pitch it in one go", body: "Say what it is and how it should feel. Add images when your subject must look exactly right. If you say enough, you skip every question." },
-  { target: "#stepper", title: "Approve twice", body: "First the storyboard and its stills, which you can redo shot by shot. Then the film. Nothing is paid until you approve each step." },
+  { target: "#stepper", title: "Pay once, approve twice", body: "One payment at the storyboard covers the whole site. You then approve the stills, redoing any shot you like, before the film is made, at no extra cost." },
   { target: "#agent-line", title: "Then make the words yours", body: "The copywriter writes the site once the stills exist. Click any line in the preview to change it, or ask for a rewrite. You can close the tab at any time; your film waits here.", last: true },
 ];
 let tourIdx = 0;
