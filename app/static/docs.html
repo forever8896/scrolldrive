@@ -117,6 +117,10 @@
           <p>To top up its Venice balance, the agent answers Venice's x402 payment request through <code>/pay/prepare</code> and <code>/pay/sign</code>. 1Claw checks the payee and the limits before signing a USDC transfer authorization.</p>
         </article>
         <article>
+          <h3><i class="ph ph-database"></i> Agent Memory</h3>
+          <p>Every accepted customer payment is a durable entry in the agent's 1Claw memory (namespace <code>frameline-payments</code>, keyed by transaction hash), encrypted at rest. It is the single record that stops a payment being used twice, and it outlives the runtime's temporary disk.</p>
+        </article>
+        <article>
           <h3><i class="ph ph-lock-key"></i> Guardrails</h3>
           <p>Unattended payments are allowed only to Venice's top-up address, at most $10 per payment and $15 per day. Loosening them needs a human step-up with an authenticator code. Every signature is in the 1Claw audit log.</p>
         </article>
@@ -206,7 +210,7 @@
       <ol class="steps">
         <li><b>Connect a wallet</b> at the storyboard. The studio asks the server whether it is an owner wallet.</li>
         <li><b>Customers pay</b> in USDC on Base, straight to the studio agent's wallet (<code>0x9e55…343e</code>): one ERC-20 transfer from their own wallet. Without a browser wallet, they can send from any wallet and paste the transaction hash.</li>
-        <li><b>The server reads the payment from the chain</b>: the receipt must have succeeded, contain a USDC transfer to the studio wallet of at least the price, and be newer than the session. Each transaction is accepted once and recorded in <code>outputs/payments-in.jsonl</code>.</li>
+        <li><b>The server reads the payment from the chain</b>: the receipt must have succeeded and contain a USDC transfer to the studio wallet of at least the price, made within the last 24 hours. Each transaction is accepted once, ever: it is recorded in the agent's <b>1Claw Agent Memory</b>, which survives restarts and redeploys and is shared by every place the agent runs. If 1Claw memory cannot be read or written, the payment is not accepted and can be retried.</li>
         <li><b>Owner wallets pay nothing.</b> They sign a one-time message (personal_sign, free, moves no funds); the server recovers the signer and checks it against <code>OWNER_WALLETS</code>.</li>
         <li><b>The agent funds its own generation.</b> When an approved render needs more than its Venice balance, it tops up from its wallet through 1claw pay, so customer revenue pays for the work within 1Claw's payee and spending limits.</li>
       </ol>
@@ -255,6 +259,8 @@
           <tr><td><code>scripts/scrollsite.py</code></td><td>Pipeline: keyframes, film, join check, encode, site, zip</td></tr>
           <tr><td><code>scripts/venice.py</code></td><td>Venice client: wallet sign-in, top-up via 1claw pay, images, video</td></tr>
           <tr><td><code>scripts/x402pay.py</code></td><td>1Claw agent token and signing helpers</td></tr>
+          <tr><td><code>scripts/evm.py</code></td><td>Keccak-256, signer recovery and reading USDC payments on Base, in plain Python</td></tr>
+          <tr><td><code>scripts/ledger.py</code></td><td>The payment record in 1Claw Agent Memory</td></tr>
           <tr><td><code>templates/</code></td><td>Site template and the shared text layer</td></tr>
           <tr><td><code>configs/</code>, <code>outputs/</code></td><td>Storyboards, runs, sessions, uploads</td></tr>
         </tbody>
@@ -296,7 +302,7 @@
       </ul>
       <h3>Still to decide or verify</h3>
       <ul>
-        <li><b>Storage.</b> The container's disk is temporary and counts against memory. Films are lost on stop, idle stop or redeploy. For a demo, disable idle stop; for real use, keep runs in object storage or publish delivered sites (for example to IPFS).</li>
+        <li><b>Storage.</b> Payments are recorded in 1Claw Agent Memory and survive anything. Sessions and films are still on the container's temporary disk and are lost on stop, idle stop or redeploy. For a demo, disable idle stop; for real use, keep runs in object storage or publish delivered sites (for example to IPFS).</li>
         <li><b>Background CPU.</b> Renders keep running after the request that started them returns. Whether the runtime gives CPU to background work between requests has to be checked on a first deploy.</li>
         <li><b>Token renewal.</b> The injected agent token lasts about two hours. A vault-backed agent key avoids relying on how renewal reaches a long-running process.</li>
       </ul>

@@ -32,6 +32,7 @@ import copywriter  # noqa: E402
 import director  # noqa: E402
 import evm  # noqa: E402
 import intake  # noqa: E402
+import ledger  # noqa: E402
 import scrollsite  # noqa: E402
 import typographer  # noqa: E402
 import venice  # noqa: E402
@@ -53,7 +54,9 @@ USDC = x402pay.BASE_USDC
 CHAIN_ID = 8453
 OWNER_WALLETS = {a.strip().lower() for a in os.environ.get(
     "OWNER_WALLETS", "0x446716454a67222351ef867576a60668eB3172Ce").split(",") if a.strip()}
-PAYMENTS_IN = os.path.join(ROOT, "outputs", "payments-in.jsonl")  # every accepted tx, so none pays twice
+# Accepted payments live in 1Claw Agent Memory (scripts/ledger.py), so a transaction unlocks
+# one film ever, across restarts, redeploys, and the runtime and local studio alike.
+PAYMENT_MAX_AGE_HOURS = float(os.environ.get("PAYMENT_MAX_AGE_HOURS", 24))
 PAID_STEPS = {"/api/shoot", "/api/redo", "/api/film"}
 # Optional owner pass for paid steps (header X-Studio-Code), e.g. for scripts.
 ACCESS_CODE = os.environ.get("STUDIO_ACCESS_CODE", "")
@@ -145,13 +148,6 @@ def customer_error(msg):
 
 
 # --- payment ---------------------------------------------------------------------------------
-
-def used_txs():
-    try:
-        return {json.loads(l)["tx"] for l in open(PAYMENTS_IN) if l.strip()}
-    except (OSError, ValueError, KeyError):
-        return set()
-
 
 def price_usd(s):
     if not s.get("name") or not os.path.exists(cfg_path(s["name"])):
@@ -623,8 +619,11 @@ class Handler(BaseHTTPRequestHandler):
         if is_paid(s):
             return self.send_json(view(s))
         with LOCK:
-            if tx in used_txs():
-                return self.send_json({"error": "That payment has already been used."}, 409)
+            try:
+                if ledger.is_used(tx):
+                    return self.send_json({"error": "That payment has already been used."}, 409)
+            except ledger.LedgerUnavailable as e:
+                return self.send_json({"error": f"Could not check the payment record right now. Try again. ({e})"}, 503)
             try:
                 got = evm.usdc_payment(tx, USDC, PAY_TO)
             except Exception as e:  # noqa: BLE001
@@ -633,15 +632,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"status": "pending"})
             if not got["ok"]:
                 return self.send_json({"error": got["reason"]}, 400)
-            if got["block_time"] < s["created"] - 120:
-                return self.send_json({"error": "That payment was made before this session started."}, 400)
+            # The durable record makes each payment single-use, so a recent payment can be claimed
+            # by a new session too (for example after a restart lost the one it was made in).
+            if time.time() - got["block_time"] > PAYMENT_MAX_AGE_HOURS * 3600:
+                return self.send_json({"error": f"That payment is older than {PAYMENT_MAX_AGE_HOURS:g} hours."}, 400)
             if got["units"] < int(round(usd * 1e6)):
-                return self.send_json({"error": f"That transfer is {got['units'] / 1e6:.2f} USDC; this film is {usd:.2f}."}, 400)
+                return self.send_json({"error": f"That transfer is {got['units'] / 1e6:.2f} USDC; this site is {usd:.2f}."}, 400)
             entry = {"tx": tx, "from": got["from"], "usd": got["units"] / 1e6, "session": s["id"],
                      "board": s["name"], "at": time.time()}
-            os.makedirs(os.path.dirname(PAYMENTS_IN), exist_ok=True)
-            with open(PAYMENTS_IN, "a") as f:
-                f.write(json.dumps(entry) + "\n")
+            try:
+                ledger.record(entry)
+            except ledger.LedgerUnavailable as e:
+                return self.send_json({"error": f"Could not record the payment safely, so it is not used yet. Try again. ({e})"}, 503)
             s["payment"] = {"kind": "usdc", "address": got["from"], "usd": entry["usd"], "tx": tx, "board": s["name"]}
             save(s)
         return self.send_json(view(s))
