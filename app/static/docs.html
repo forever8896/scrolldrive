@@ -158,7 +158,8 @@
         <li><b>Never pays twice.</b> Each step is recorded in <code>venice-state.json</code> before it is paid; a re-run resumes and only does what is missing. A redone still makes its neighbouring moves stale, and only those are filmed again.</li>
         <li><b>Budget per run.</b> A run stops if it would exceed twice its quote, which leaves room for redos.</li>
         <li><b>Join check.</b> After filming, the last frame of each move is compared to the next still (SSIM on a small blurred version). A low score is flagged in the studio.</li>
-        <li><b>Polling is free.</b> Video jobs are queued and checked every 15 seconds at no cost.</li>
+        <li><b>In parallel.</b> Shot A is generated first; every other still is then generated at once, each composed from your references and from shot A, which anchors the place, light and palette. All camera moves are queued together, so the film takes about as long as its slowest move. Strange (experimental) sites keep shot-to-shot chaining, since their stills evolve one from the next.</li>
+        <li><b>Polling is free.</b> Video jobs are checked every 10 seconds at no cost.</li>
       </ul>
     </section>
 

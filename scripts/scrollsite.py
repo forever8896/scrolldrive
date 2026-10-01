@@ -25,9 +25,11 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import venice  # noqa: E402
@@ -37,6 +39,7 @@ EDIT_MODEL = "nano-banana-pro-edit"
 GEN_MODEL = "nano-banana-pro"
 DEFAULT_VIDEO_MODEL = "minimax-h3-max-image-to-video"
 IMAGE_PRICE_FALLBACK = 0.18
+MAX_PARALLEL = 4  # stills generated at once
 
 ROOT = x402pay.ROOT
 TEMPLATE = os.path.join(ROOT, "templates", "scroll-site.html")
@@ -144,23 +147,38 @@ def keyframe_path(run_dir, kid):
 # --- run state (resumable, never pays twice) --------------------------------------
 
 class State:
+    """Run state on disk. Thread-safe: stills and moves are generated in parallel."""
+
     def __init__(self, path):
         self.path = path
+        self.lock = threading.RLock()
         self.d = json.load(open(path)) if os.path.exists(path) else {"spent_usd": 0.0, "steps": {}}
 
     def get(self, key):
-        return self.d["steps"].get(key)
+        with self.lock:
+            return self.d["steps"].get(key)
 
     def put(self, key, value):
-        self.d["steps"][key] = value
-        self.save()
+        with self.lock:
+            self.d["steps"][key] = value
+            self.save()
 
     def spend(self, usd):
-        self.d["spent_usd"] = round(self.d["spent_usd"] + usd, 6)
-        self.save()
+        with self.lock:
+            self.d["spent_usd"] = round(self.d["spent_usd"] + usd, 6)
+            self.save()
+
+    def reserve(self, budget, usd, label):
+        """Check the budget and count the spend in one step, so parallel work cannot overshoot."""
+        with self.lock:
+            check_budget(self, budget, usd, label)
+            self.spend(usd)
 
     def save(self):
-        json.dump(self.d, open(self.path, "w"), indent=2)
+        with self.lock:
+            tmp = self.path + ".tmp"
+            json.dump(self.d, open(tmp, "w"), indent=2)
+            os.replace(tmp, self.path)
 
 
 class Budget(Exception):
@@ -176,10 +194,17 @@ def check_budget(state, budget, usd, label):
 # --- stage 1: keyframes -------------------------------------------------------------
 
 def keyframes(cfg, state, run_dir, budget, only=None):
+    """Shoot the stills. Shot A first; the rest in parallel, each composed from the user's
+    references and, when chained, from shot A, which anchors the world (place, light,
+    palette) without the drift that chaining shot to shot accumulates. Experimental films
+    keep shot-to-shot chaining, since their stills are meant to evolve one from the next."""
     refs = references(cfg, run_dir)
     price = image_price(EDIT_MODEL)
-    frames, prev = {}, None
-    for kf in cfg["keyframes"]:
+    kfs = cfg["keyframes"]
+    sequential = cfg.get("type") == "experimental" or cfg.get("chain_mode") == "previous"
+    frames = {}
+
+    def shoot(kf, chained_from):
         kid = kf["id"]
         path = keyframe_path(run_dir, kid)
         if only and kid in only and path:
@@ -187,62 +212,87 @@ def keyframes(cfg, state, run_dir, budget, only=None):
             path = None
         if not path:
             inputs = [refs[i - 1] for i in (kf.get("refs") or []) if 1 <= i <= len(refs)]
-            if kf.get("chain") and prev:
-                inputs.append(prev)
+            if kf.get("chain") and chained_from:
+                inputs.append(chained_from)
             mode = f"composed from {len(inputs)} image(s)" if inputs else "generated from text"
             log(f"Keyframe {kid}: nano-banana-pro on Venice, {mode} (${price:.2f})")
-            check_budget(state, budget, price, f"keyframe {kid}")
-            if inputs:
-                img = venice.image_multi_edit(EDIT_MODEL, kf["prompt"], [jpeg_data_url(p) for p in inputs],
-                                              cfg.get("aspect_ratio", "16:9"))
-            else:
-                img = venice.image_generate(GEN_MODEL, kf["prompt"], cfg.get("aspect_ratio", "16:9"))
-            state.spend(price)
+            state.reserve(budget, price, f"keyframe {kid}")
+            try:
+                if inputs:
+                    img = venice.image_multi_edit(EDIT_MODEL, kf["prompt"], [jpeg_data_url(p) for p in inputs],
+                                                  cfg.get("aspect_ratio", "16:9"))
+                else:
+                    img = venice.image_generate(GEN_MODEL, kf["prompt"], cfg.get("aspect_ratio", "16:9"))
+            except Exception:
+                state.spend(-price)  # nothing was generated, so nothing was spent
+                raise
             path = os.path.join(run_dir, f"kf-{kid}.png")
             open(path, "wb").write(img)
-        frames[kid] = {"path": path}
-        prev = path
         log(f"Keyframe {kid}: {path}")
-    return frames
+        return path
+
+    if sequential:
+        prev = None
+        for kf in kfs:
+            prev = frames.setdefault(kf["id"], {"path": shoot(kf, prev)})["path"]
+        return frames
+
+    anchor = shoot(kfs[0], None)
+    frames[kfs[0]["id"]] = {"path": anchor}
+    for p in [anchor] + refs:
+        jpeg_data_url(p)  # prepare shared inputs once, before threads read them
+    with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as pool:
+        futures = {kf["id"]: pool.submit(shoot, kf, anchor) for kf in kfs[1:]}
+        for kid, fut in futures.items():
+            frames[kid] = {"path": fut.result()}
+    return {k["id"]: frames[k["id"]] for k in kfs}
 
 
 # --- stage 2: film --------------------------------------------------------------------
 
 def clips(cfg, state, run_dir, budget, frames):
+    """Film every camera move at once: each needs only its two finished stills, so all are
+    queued together and checked together; the film takes about as long as its slowest move."""
     ids = [k["id"] for k in cfg["keyframes"]]
     v = cfg.get("video", {})
     model = v.get("model", DEFAULT_VIDEO_MODEL)
     duration, resolution = f"{v.get('duration', 5)}s", v.get("resolution", "768P")
     price = venice.video_quote(model, duration, resolution)
-    out = []
+    out, pending = [], {}
     for a, b in zip(ids, ids[1:]):
         # A clip belongs to the exact pair of keyframe files it was shot from; a redone
         # keyframe makes its neighbouring clips stale, so they are filmed again.
         stamp = f"{os.path.getmtime(frames[a]['path']):.0f}-{os.path.getmtime(frames[b]['path']):.0f}-{resolution}"
         key = f"venice-clip:{a}-{b}:{stamp}"
         path = os.path.join(run_dir, f"clip-{a}-{b}.mp4")
-        if not state.get(key) or not os.path.exists(path) or state.get(key).get("written") != stamp:
-            if not state.get(key):
-                prompt = (cfg.get("transitions") or {}).get(f"{a}-{b}") or cfg.get("transition_prompt")
-                log(f"Clip {a}->{b}: {model} {resolution} {duration}, first->last frame (${price:.2f})")
-                check_budget(state, budget, price, f"clip {a}->{b}")
-                qid = venice.video_queue(model, prompt, jpeg_data_url(frames[a]["path"]),
-                                         jpeg_data_url(frames[b]["path"]), duration, resolution)
-                state.put(key, {"queue_id": qid, "model": model})  # saved first: never re-pays
-                state.spend(price)
-            qid = state.get(key)["queue_id"]
-            for _ in range(60):
-                status, video = venice.video_retrieve(model, qid)
-                if video:
-                    open(path, "wb").write(video)
-                    state.put(key, {**state.get(key), "written": stamp})
-                    break
-                log(f"  clip {a}->{b}: {status}; checking again in 15s (free)")
-                time.sleep(15)
-            else:
-                raise RuntimeError(f"clip {a}->{b} still rendering after 15 min; re-run to keep checking")
-        log(f"Clip {a}->{b}: {path}")
         out.append({"from": a, "to": b, "path": path})
+        if state.get(key) and os.path.exists(path) and state.get(key).get("written") == stamp:
+            log(f"Clip {a}->{b}: {path}")
+            continue
+        if not state.get(key):
+            prompt = (cfg.get("transitions") or {}).get(f"{a}-{b}") or cfg.get("transition_prompt")
+            log(f"Clip {a}->{b}: {model} {resolution} {duration}, first->last frame (${price:.2f})")
+            check_budget(state, budget, price, f"clip {a}->{b}")
+            qid = venice.video_queue(model, prompt, jpeg_data_url(frames[a]["path"]),
+                                     jpeg_data_url(frames[b]["path"]), duration, resolution)
+            state.put(key, {"queue_id": qid, "model": model})  # saved first: never re-pays
+            state.spend(price)
+        pending[(a, b)] = (key, path, stamp)
+    deadline = time.time() + 15 * 60
+    while pending:
+        for (a, b), (key, path, stamp) in list(pending.items()):
+            status, video = venice.video_retrieve(model, state.get(key)["queue_id"])
+            if video:
+                open(path, "wb").write(video)
+                state.put(key, {**state.get(key), "written": stamp})
+                log(f"Clip {a}->{b}: {path}")
+                del pending[(a, b)]
+        if not pending:
+            break
+        if time.time() > deadline:
+            raise RuntimeError(f"{len(pending)} move(s) still rendering after 15 min; re-run to keep checking")
+        log(f"  clip {', '.join(f'{a}->{b}' for a, b in pending)}: {status}; checking again in 10s (free)")
+        time.sleep(10)
     return out
 
 

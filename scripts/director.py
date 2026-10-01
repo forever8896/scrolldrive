@@ -63,8 +63,9 @@ film and the page should be; the user only gave a brief, a few controls and opti
 How keyframes are made (you choose per shot):
 - "refs": list of reference numbers (1-based) to compose from. Use a reference whenever the shot must
   contain the user's real subject (their product, their face, their artwork). Up to 3 per shot.
-- "chain": true to also pass the previous keyframe, so light, place and palette carry over. Use it for
-  every shot after the first unless a deliberate hard change of world is the point.
+- "chain": true to also pass shot A (the first keyframe), so place, light and palette carry over
+  (for experimental films it passes the previous shot instead, so each still evolves from the last).
+  Use it for every shot after the first unless a deliberate hard change of world is the point.
 - A shot with no refs and chain false is generated from text alone (only sensible for shot A).
 Write every keyframe prompt as a complete photographic or artistic description of ONE 16:9 frame:
 subject, framing, camera position, setting, light, palette, texture. When refs are used, start with
