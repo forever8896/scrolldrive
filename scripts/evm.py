@@ -153,6 +153,8 @@ def usdc_payment(tx_hash, token, to):
     if not paid:
         return {"ok": False, "reason": "no USDC transfer to the studio in that transaction"}
     block = rpc("eth_getBlockByNumber", [receipt["blockNumber"], False])
+    if not block:  # Base's public RPC is load-balanced: a fresh receipt can arrive before its block
+        return None
     return {"ok": True, "from": payer, "units": paid, "block_time": int(block["timestamp"], 16)}
 
 
