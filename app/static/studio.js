@@ -561,10 +561,26 @@ function renderGate() {
   go.hidden = false;
   back.hidden = false;
   go.disabled = false;
-  if (phase === "board") {
+  $("#paybox").hidden = true;
+  if (phase === "board" && !V.pay?.paid) {
+    const price = usd(V.pay.amount_usd);
+    $("#gate-title").textContent = `${price} for the whole site`;
+    $("#gate-body").textContent = "One payment covers the stills, the film, the words and your site. You still review every still before any film is made. Paid in USDC on Base, straight to the studio's own wallet.";
+    go.innerHTML = !wallet.address ? `Connect wallet <i class="ph ph-wallet"></i>`
+      : wallet.owner ? `Shoot free, you own the studio <i class="ph ph-aperture"></i>`
+        : `Pay ${price} and shoot <i class="ph ph-arrow-right"></i>`;
+    back.innerHTML = `<i class="ph ph-arrow-left"></i> Back to the brief`;
+    $("#paybox").hidden = false;
+    $("#pay-wallet").innerHTML = wallet.address ? `<i class="ph ph-wallet"></i> ${short(wallet.address)}${wallet.owner ? " · owner" : ""}` : "";
+    $("#pm-amount").textContent = V.pay.amount_usd.toFixed(2);
+    $("#pm-to").textContent = V.pay.to;
+    $("#board-status").textContent = "Awaiting payment";
+    $("#board-status").className = "board-status";
+  } else if (phase === "board") {
+    const p = V.payment;
     $("#gate-title").textContent = `Shoot the ${b.keyframes.length} keyframes`;
-    $("#gate-body").textContent = `Stills first, ${usd(b.cost.keyframes_usd)} from the agent's balance. You review every one before any film is made. The whole site is ${usd(b.price_usd)} to you.`;
-    go.innerHTML = `Shoot keyframes ${usd(b.cost.keyframes_usd)} <i class="ph ph-aperture"></i>`;
+    $("#gate-body").textContent = `${p?.kind === "owner" ? "Owner wallet: no charge." : p ? `Paid ${usd(p.usd)} from ${short(p.address)}.` : ""} Stills first; you review every one before any film is made.`;
+    go.innerHTML = `Shoot keyframes <i class="ph ph-aperture"></i>`;
     back.innerHTML = `<i class="ph ph-arrow-left"></i> Back to the brief`;
     $("#board-status").textContent = "Awaiting approval";
     $("#board-status").className = "board-status";
@@ -598,10 +614,87 @@ function progressNow() {
 }
 function setProgress(f) { $("#progress-bar").style.transform = `scaleX(${Math.max(0, Math.min(1, f))})`; }
 
+/* ---------------- payment: owner wallets sign, everyone else pays USDC on Base ---------------- */
+const wallet = { address: null, owner: false };
+const short = (a) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : "");
+const hexOf = (text) => `0x${[...new TextEncoder().encode(text)].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function ensureBase(eth) {
+  if ((await eth.request({ method: "eth_chainId" })) === "0x2105") return;
+  try {
+    await eth.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x2105" }] });
+  } catch (e) {
+    if (e.code !== 4902) throw e;
+    await eth.request({ method: "wallet_addEthereumChain", params: [{ chainId: "0x2105", chainName: "Base",
+      nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 }, rpcUrls: ["https://mainnet.base.org"],
+      blockExplorerUrls: ["https://basescan.org"] }] });
+  }
+}
+
+async function connectWallet() {
+  const eth = window.ethereum;
+  if (!eth) {
+    $("#pay-manual").hidden = false;
+    say("No browser wallet found. Pay from any wallet with the address below, or install Coinbase Wallet, MetaMask or Rabby.", "warn");
+    return false;
+  }
+  const [address] = await eth.request({ method: "eth_requestAccounts" });
+  wallet.address = address.toLowerCase();
+  const r = await api("/api/pay/challenge", { session: V.id, address: wallet.address });
+  wallet.owner = r.owner;
+  wallet.message = r.message || null;
+  say(wallet.owner ? "That is the studio owner's wallet: you can shoot for free." : `Connected ${short(address)}.`);
+  return true;
+}
+
+async function ownerSignIn() {
+  if (!wallet.message) await connectWallet();
+  const signature = await window.ethereum.request({ method: "personal_sign", params: [hexOf(wallet.message), wallet.address] });
+  wallet.message = null;
+  render(await api("/api/pay/owner", { session: V.id, signature }), { quiet: true });
+}
+
+async function confirmPayment(tx) {
+  say("Payment sent. Waiting for Base to confirm it.");
+  for (let i = 0; i < 80; i += 1) {
+    const r = await api("/api/pay/confirm", { session: V.id, tx });
+    if (r.status !== "pending") { render(r, { quiet: true }); return; }
+    await sleep(3000);
+  }
+  throw new Error("Base has not confirmed the payment yet. Paste the transaction hash under 'Pay from another wallet' in a minute.");
+}
+
+async function payUsdc() {
+  const eth = window.ethereum;
+  await ensureBase(eth);
+  const p = V.pay;
+  const data = `0xa9059cbb${p.to.slice(2).toLowerCase().padStart(64, "0")}${BigInt(p.amount_units).toString(16).padStart(64, "0")}`;
+  say(`Approve ${usd(p.amount_usd)} USDC in your wallet.`);
+  const tx = await eth.request({ method: "eth_sendTransaction", params: [{ from: wallet.address, to: p.token, data }] });
+  ledger(`You paid ${usd(p.amount_usd)} USDC`, short(tx));
+  await confirmPayment(tx);
+}
+
+$("#pay-manual-btn").addEventListener("click", () => { $("#pay-manual").hidden = !$("#pay-manual").hidden; });
+$("#pm-copy").addEventListener("click", () => { navigator.clipboard?.writeText(V.pay.to); say("Studio wallet address copied."); });
+$("#pay-manual").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const tx = $("#pm-tx").value.trim();
+  try { await confirmPayment(tx); if (V.pay?.paid) say("Payment received. Shoot when you are ready."); }
+  catch (err) { say(`Could not accept that payment: ${err.message}`, "warn"); }
+});
+
 $("#gate-go").addEventListener("click", async () => {
   const go = $("#gate-go");
   go.disabled = true;
   try {
+    if (V.phase === "board" && !V.pay?.paid) {
+      if (!wallet.address) { await connectWallet(); renderGate(); return; }
+      if (wallet.owner) await ownerSignIn();
+      else await payUsdc();
+      if (!V.pay?.paid) { renderGate(); return; }
+    }
     if (V.phase === "board") {
       const v = await api("/api/shoot", { session: V.id, approve: true });
       ledger("Keyframes approved by you", usd(V.board.cost.keyframes_usd));

@@ -31,7 +31,7 @@
       <li><a href="#site">The finished site</a></li>
       <li><a href="#editing">Words and type</a></li>
       <li><a href="#reliability">Reliability</a></li>
-      <li><a href="#pricing">Pricing</a></li>
+      <li><a href="#pricing">Pricing and payment</a></li>
       <li><a href="#api">API</a></li>
       <li><a href="#files">Project layout</a></li>
       <li><a href="#local">Run it locally</a></li>
@@ -201,9 +201,16 @@
     </section>
 
     <section id="pricing">
-      <h2>Pricing</h2>
-      <p>The studio shows two numbers. <b>Your price</b> is what a customer would pay: $29 plus $8 per camera move ($53 for three). <b>Agent's cost</b> is the live Venice cost: stills plus moves, for example $0.72 + $0.72 = $1.44 for three moves at 768p.</p>
-      <p class="note">Collecting the customer's payment is not built yet. Today the price is a quote; the agent pays the render cost from its own balance.</p>
+      <h2>Pricing and payment</h2>
+      <p>A site costs $29 plus $8 per camera move ($53 for three), paid once before anything is generated. It covers the stills, any redos within the run's budget, the film, the words and the site.</p>
+      <ol class="steps">
+        <li><b>Connect a wallet</b> at the storyboard. The studio asks the server whether it is an owner wallet.</li>
+        <li><b>Customers pay</b> in USDC on Base, straight to the studio agent's wallet (<code>0x9e55…343e</code>): one ERC-20 transfer from their own wallet. Without a browser wallet, they can send from any wallet and paste the transaction hash.</li>
+        <li><b>The server reads the payment from the chain</b>: the receipt must have succeeded, contain a USDC transfer to the studio wallet of at least the price, and be newer than the session. Each transaction is accepted once and recorded in <code>outputs/payments-in.jsonl</code>.</li>
+        <li><b>Owner wallets pay nothing.</b> They sign a one-time message (personal_sign, free, moves no funds); the server recovers the signer and checks it against <code>OWNER_WALLETS</code>.</li>
+        <li><b>The agent funds its own generation.</b> When an approved render needs more than its Venice balance, it tops up from its wallet through 1claw pay, so customer revenue pays for the work within 1Claw's payee and spending limits.</li>
+      </ol>
+      <p>The AI steps before payment (reading the pitch, the storyboard, rewrites and layouts) are free to try and rate limited per visitor (<code>LLM_LIMIT_PER_HOUR</code>, 40 by default). Signature checks and Keccak-256 are plain Python in <code>scripts/evm.py</code>, tested against eth-account.</p>
     </section>
 
     <section id="api">
@@ -217,7 +224,10 @@
           <tr><td><code>POST /api/intake</code></td><td>Pitch to brief and the missing questions</td></tr>
           <tr><td><code>POST /api/answer</code></td><td>Answers to those questions</td></tr>
           <tr><td><code>POST /api/storyboard</code></td><td>Direct the storyboard with the controls</td></tr>
-          <tr><td><code>POST /api/shoot</code></td><td>Shoot the keyframes (<code>approve: true</code>)</td></tr>
+          <tr><td><code>POST /api/pay/challenge</code></td><td>Is this wallet an owner? If so, the message to sign</td></tr>
+          <tr><td><code>POST /api/pay/owner</code></td><td>Owner signature: unlocks the session at no charge</td></tr>
+          <tr><td><code>POST /api/pay/confirm</code></td><td>A USDC transaction hash: verified on Base, then unlocks the session</td></tr>
+          <tr><td><code>POST /api/shoot</code></td><td>Shoot the keyframes (<code>approve: true</code>, paid sessions only)</td></tr>
           <tr><td><code>POST /api/redo</code></td><td>Reshoot one keyframe, optionally with a new prompt</td></tr>
           <tr><td><code>POST /api/film</code></td><td>Write the words and film the moves (<code>approve: true</code>)</td></tr>
           <tr><td><code>GET /api/events?session=</code></td><td>Live render events (SSE), replayed from the start</td></tr>
@@ -281,7 +291,7 @@
         <li><b>ffmpeg.</b> The Python image has none and runs as a non-root user, so apt is not an option. <code>requirements.txt</code> installs <code>imageio-ffmpeg</code>, which ships a static ffmpeg with x264, SSIM and blur; the pipeline uses the system ffmpeg when there is one and that build otherwise. ffprobe is no longer needed.</li>
         <li><b>Port and host.</b> The server reads <code>PORT</code> and <code>HOST</code>; on the runtime it runs with <code>HOST=0.0.0.0</code> on the port the runtime provides.</li>
         <li><b>Credentials.</b> The agent key is read from <code>ONECLAW_AGENT_ID</code> and <code>ONECLAW_AGENT_API_KEY</code> (a vault-backed variable on the runtime), then the local key file, then the token the runtime injects.</li>
-        <li><b>Spend protection.</b> With <code>STUDIO_ACCESS_CODE</code> set, every action that spends money or LLM quota needs the code. Open the studio once with <code>?code=...</code> and it is remembered in that browser.</li>
+        <li><b>Spend protection.</b> Every paid step needs a verified payment or an owner signature; the AI steps are rate limited. <code>STUDIO_ACCESS_CODE</code> optionally acts as an owner pass for scripts.</li>
         <li><b>Showcase.</b> The repository ships the Psyduck film, so the home page works on a fresh container. Private projects, uploads, sessions and payment records stay out of it.</li>
       </ul>
       <h3>Still to decide or verify</h3>
@@ -301,7 +311,7 @@
     <section id="gaps">
       <h2>Known gaps</h2>
       <ul>
-        <li>No customer payment yet: prices are quotes.</li>
+        <li>Payment is in USDC on Base only, from a wallet. No cards yet.</li>
         <li>Shroud no longer routes Anthropic, Google or OpenAI models through OpenRouter (the <code>openrouter/</code> model prefix is rejected), so the roles use other providers' models.</li>
         <li>Camera moves can drift from their end still; the join check flags it but does not refilm automatically.</li>
         <li>Pitch reading and the typographer take 20 seconds to 2 minutes because the model looks at every image.</li>

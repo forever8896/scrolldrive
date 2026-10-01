@@ -30,6 +30,7 @@ ROOT = os.path.dirname(APP)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 import copywriter  # noqa: E402
 import director  # noqa: E402
+import evm  # noqa: E402
 import intake  # noqa: E402
 import scrollsite  # noqa: E402
 import typographer  # noqa: E402
@@ -45,10 +46,21 @@ MAX_REFS = 6
 SHOWCASE = "psyduck-plush-bba2"  # the film the landing page is built around
 PAY_GUARDRAILS = {"allowlist": ["Venice top-up (0x2670…293f)"], "max_per_payment_usd": 10, "daily_limit_usd": 15}
 
-# When set, anything that spends money or LLM quota needs this code (header X-Studio-Code).
-# A public deployment must set it: otherwise anyone could approve renders on the agent's balance.
+# Payment. Customers pay the studio agent's wallet in USDC on Base before anything is generated;
+# the server reads the transfer from the chain. Owner wallets sign a message instead and pay nothing.
+PAY_TO = x402pay.AGENT_ADDRESS
+USDC = x402pay.BASE_USDC
+CHAIN_ID = 8453
+OWNER_WALLETS = {a.strip().lower() for a in os.environ.get(
+    "OWNER_WALLETS", "0x446716454a67222351ef867576a60668eB3172Ce").split(",") if a.strip()}
+PAYMENTS_IN = os.path.join(ROOT, "outputs", "payments-in.jsonl")  # every accepted tx, so none pays twice
+PAID_STEPS = {"/api/shoot", "/api/redo", "/api/film"}
+# Optional owner pass for paid steps (header X-Studio-Code), e.g. for scripts.
 ACCESS_CODE = os.environ.get("STUDIO_ACCESS_CODE", "")
-GUARDED = {"/api/intake", "/api/storyboard", "/api/shoot", "/api/redo", "/api/film", "/api/rewrite", "/api/layout"}
+# The AI steps are free to try but rate limited per visitor, to protect the LLM quota.
+LLM_STEPS = {"/api/intake", "/api/storyboard", "/api/rewrite", "/api/layout"}
+LLM_LIMIT_PER_HOUR = int(os.environ.get("LLM_LIMIT_PER_HOUR", 40))
+RATE = {}
 
 SESSIONS = {}
 LOCK = threading.Lock()
@@ -114,6 +126,37 @@ def prices():
             "clip_usd": {r: venice.video_quote(scrollsite.DEFAULT_VIDEO_MODEL, "5s", r) for r in ("768P", "1080P")},
             "build_fee_usd": director.BUILD_FEE_USD, "per_scene_usd": director.PER_SCENE_USD, "at": time.time()})
     return {k: v for k, v in PRICES.items() if k != "at"}
+
+
+# --- payment ---------------------------------------------------------------------------------
+
+def used_txs():
+    try:
+        return {json.loads(l)["tx"] for l in open(PAYMENTS_IN) if l.strip()}
+    except (OSError, ValueError, KeyError):
+        return set()
+
+
+def price_usd(s):
+    if not s.get("name") or not os.path.exists(cfg_path(s["name"])):
+        return None
+    n = len(load_cfg(s["name"])["keyframes"])
+    return director.BUILD_FEE_USD + director.PER_SCENE_USD * (n - 1)
+
+
+def is_paid(s):
+    pay = s.get("payment") or {}
+    return pay.get("kind") == "owner" or (pay.get("kind") == "usdc" and pay.get("board") == s.get("name"))
+
+
+def topup_if_needed(need_usd):
+    """Before an approved render: if the agent's Venice balance cannot cover it, the agent tops
+    itself up from its wallet through 1claw pay (1Claw enforces the payee and the caps)."""
+    bal = float(venice.balance()["data"]["balanceUsd"])
+    if bal >= need_usd + 0.05:
+        return None
+    venice.topup()
+    return float(venice.balance()["data"]["balanceUsd"])
 
 
 # --- detached render jobs -------------------------------------------------------------
@@ -242,6 +285,11 @@ def view(s):
         out["job"] = {"stage": s["job"]["stage"], "running": running, "code": code, "only": s["job"].get("only")}
     if s.get("name") and os.path.exists(cfg_path(s["name"])):
         out["board"] = board_view(s["name"])
+        usd = price_usd(s)
+        out["pay"] = {"paid": is_paid(s), "to": PAY_TO, "token": USDC, "chain_id": CHAIN_ID,
+                      "amount_usd": usd, "amount_units": int(round(usd * 1e6))}
+    pay = s.get("payment") or {}
+    out["payment"] = {k: pay.get(k) for k in ("kind", "address", "usd", "tx")} if pay else None
     return out
 
 
@@ -495,9 +543,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(view(new_session()))
             if p == "/api/upload":
                 return self.api_upload(self.session(q))
-            if ACCESS_CODE and p in GUARDED and not secrets.compare_digest(
-                    self.headers.get("X-Studio-Code", ""), ACCESS_CODE):
-                return self.send_json({"error": "This studio needs an access code for that.", "need_code": True}, 403)
+            if p in LLM_STEPS and not self.rate_ok():
+                return self.send_json({"error": "That is a lot of drafting for one hour. Try again a little later."}, 429)
             data = json.loads(self.body() or b"{}")
             if p == "/api/open":
                 return self.api_open(data)
@@ -507,12 +554,96 @@ class Handler(BaseHTTPRequestHandler):
             handler = {"/api/ref/remove": self.api_ref_remove, "/api/intake": self.api_intake,
                        "/api/answer": self.api_answer, "/api/storyboard": self.api_storyboard,
                        "/api/shoot": self.api_shoot, "/api/redo": self.api_redo, "/api/film": self.api_film,
-                       "/api/copy": self.api_copy, "/api/layout": self.api_layout, "/api/undo": self.api_undo, "/api/rewrite": self.api_rewrite, "/api/back": self.api_back}.get(p)
+                       "/api/copy": self.api_copy, "/api/layout": self.api_layout, "/api/undo": self.api_undo, "/api/rewrite": self.api_rewrite, "/api/back": self.api_back,
+                       "/api/pay/challenge": self.api_pay_challenge, "/api/pay/owner": self.api_pay_owner,
+                       "/api/pay/confirm": self.api_pay_confirm}.get(p)
+            if p in PAID_STEPS and not (is_paid(s) or self.has_code()):
+                return self.send_json({"error": "This step needs payment first.", "need_payment": True}, 402)
             if handler:
                 return handler(s, data)
         except Exception as e:  # noqa: BLE001  surface errors to the UI instead of dropping the socket
             return self.send_json({"error": f"{type(e).__name__}: {e}"[:400]}, 500)
         self.send_error(404)
+
+    def client_ip(self):
+        fwd = self.headers.get("X-Forwarded-For", "")
+        return fwd.split(",")[0].strip() if fwd else self.client_address[0]
+
+    def rate_ok(self):
+        now, ip = time.time(), self.client_ip()
+        hits = [t for t in RATE.get(ip, []) if now - t < 3600]
+        if len(hits) >= LLM_LIMIT_PER_HOUR and not self.has_code():
+            RATE[ip] = hits
+            return False
+        RATE[ip] = hits + [now]
+        return True
+
+    def has_code(self):
+        return bool(ACCESS_CODE) and secrets.compare_digest(self.headers.get("X-Studio-Code", ""), ACCESS_CODE)
+
+    # --- payment api ---
+    def api_pay_challenge(self, s, data):
+        """An owner wallet proves itself by signing a one-time message; everyone else pays."""
+        addr = str(data.get("address") or "").lower()
+        if not re.fullmatch(r"0x[0-9a-f]{40}", addr):
+            return self.send_json({"error": "That is not a wallet address."}, 400)
+        if addr not in OWNER_WALLETS:
+            return self.send_json({"owner": False})
+        message = (f"Frameline: sign in as the studio owner.\n\nThis is free and moves no funds.\n\n"
+                   f"Wallet: {addr}\nSession: {s['id']}\nNonce: {secrets.token_hex(12)}\n"
+                   f"Issued: {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}")
+        s["challenge"] = {"address": addr, "message": message, "expires": time.time() + 600}
+        save(s)
+        return self.send_json({"owner": True, "message": message})
+
+    def api_pay_owner(self, s, data):
+        ch = s.get("challenge") or {}
+        if not ch or time.time() > ch.get("expires", 0):
+            return self.send_json({"error": "The sign-in request expired. Try again."}, 400)
+        try:
+            signer = evm.personal_recover(ch["message"], str(data.get("signature") or ""))
+        except (ValueError, TypeError) as e:
+            return self.send_json({"error": f"That signature could not be read: {e}"}, 400)
+        if signer != ch["address"] or signer not in OWNER_WALLETS:
+            return self.send_json({"error": "That signature is not from an owner wallet."}, 403)
+        s["payment"] = {"kind": "owner", "address": signer, "usd": 0, "at": time.time()}
+        s.pop("challenge", None)
+        save(s)
+        return self.send_json(view(s))
+
+    def api_pay_confirm(self, s, data):
+        """Accept a USDC transfer to the studio wallet, read from Base, once per transaction."""
+        tx = str(data.get("tx") or "").strip().lower()
+        if not re.fullmatch(r"0x[0-9a-f]{64}", tx):
+            return self.send_json({"error": "That is not a transaction hash."}, 400)
+        usd = price_usd(s)
+        if usd is None:
+            return self.send_json({"error": "Draft a storyboard first."}, 400)
+        if is_paid(s):
+            return self.send_json(view(s))
+        with LOCK:
+            if tx in used_txs():
+                return self.send_json({"error": "That payment has already been used."}, 409)
+            try:
+                got = evm.usdc_payment(tx, USDC, PAY_TO)
+            except Exception as e:  # noqa: BLE001
+                return self.send_json({"error": f"Could not read Base right now: {str(e)[:160]}"}, 502)
+            if got is None:
+                return self.send_json({"status": "pending"})
+            if not got["ok"]:
+                return self.send_json({"error": got["reason"]}, 400)
+            if got["block_time"] < s["created"] - 120:
+                return self.send_json({"error": "That payment was made before this session started."}, 400)
+            if got["units"] < int(round(usd * 1e6)):
+                return self.send_json({"error": f"That transfer is {got['units'] / 1e6:.2f} USDC; this film is {usd:.2f}."}, 400)
+            entry = {"tx": tx, "from": got["from"], "usd": got["units"] / 1e6, "session": s["id"],
+                     "board": s["name"], "at": time.time()}
+            os.makedirs(os.path.dirname(PAYMENTS_IN), exist_ok=True)
+            with open(PAYMENTS_IN, "a") as f:
+                f.write(json.dumps(entry) + "\n")
+            s["payment"] = {"kind": "usdc", "address": got["from"], "usd": entry["usd"], "tx": tx, "board": s["name"]}
+            save(s)
+        return self.send_json(view(s))
 
     # --- api ---
     def api_open(self, data):
@@ -620,15 +751,31 @@ class Handler(BaseHTTPRequestHandler):
                             notes=str(data.get("notes") or "")[:400] or None)
         except SystemExit as e:
             return self.send_json({"error": str(e)[:400]}, 502)
+        pay = s.get("payment") or {}
+        if pay.get("kind") == "usdc" and not pay.get("used") and pay.get("usd", 0) + 1e-9 >= (price_usd({"name": slug}) or 1e9):
+            pay["board"] = slug  # paid but nothing generated yet: the payment moves to the new storyboard
         s["name"], s["phase"], s["job"], s["error"] = slug, "board", None, None
         save(s)
         return self.send_json(view(s))
 
     def start(self, s, stage, only=None):
+        cfg = load_cfg(s["name"])
+        p = prices()
+        n = len(cfg["keyframes"])
+        need = (p["image_usd"] * (1 if only else n) if stage == "keyframes"
+                else p["clip_usd"][cfg["video"].get("resolution", "768P")] * (n - 1))
         with LOCK:
             if any_running():
                 return self.send_json({"error": "Another film is rendering. Try again in a minute."}, 409)
+            try:
+                topup_if_needed(need)
+            except Exception as e:  # noqa: BLE001
+                return self.send_json({"error": "The studio's generation balance is low and the agent could not "
+                                                f"top it up: {str(e)[:200]}"}, 503)
             launch(s, stage, only)
+            if s.get("payment"):
+                s["payment"]["used"] = True
+                save(s)
         return self.send_json(view(s))
 
     def api_shoot(self, s, data):
@@ -769,7 +916,7 @@ def main():
     host = os.environ.get("HOST", "127.0.0.1")
     mimetypes.add_type("video/mp4", ".mp4")
     load_sessions()
-    print(f"Frameline studio at http://{host}:{port}" + (" (paid actions need the access code)" if ACCESS_CODE else ""))
+    print(f"Frameline studio at http://{host}:{port} (payments to {PAY_TO}, {len(OWNER_WALLETS)} owner wallet(s))")
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 
 

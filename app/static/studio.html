@@ -144,6 +144,17 @@
           <button class="link-btn" id="gate-back"></button>
           <button class="btn btn-primary" id="gate-go"></button>
         </div>
+        <div class="paybox" id="paybox" hidden>
+          <div class="pay-row">
+            <span class="pay-wallet" id="pay-wallet"></span>
+            <button class="link-btn" type="button" id="pay-manual-btn"><i class="ph ph-qr-code"></i> Pay from another wallet</button>
+          </div>
+          <form class="pay-manual" id="pay-manual" hidden>
+            <p>Send <b id="pm-amount"></b> USDC on <b>Base</b> to the studio wallet, then paste the transaction hash.</p>
+            <div class="pm-addr"><code id="pm-to"></code><button type="button" class="link-btn" id="pm-copy"><i class="ph ph-copy"></i> Copy</button></div>
+            <div class="pm-tx"><input id="pm-tx" placeholder="0x… transaction hash" autocomplete="off" spellcheck="false"><button class="btn btn-ghost btn-sm">Verify</button></div>
+          </form>
+        </div>
       </div>
       <div class="ledger" id="ledger" hidden>
         <div class="ledger-head"><i class="ph ph-receipt"></i> Agent activity</div>

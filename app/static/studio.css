@@ -194,7 +194,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 }
 .board-status.live { color: var(--accent); border-color: var(--accent); }
 .strip {
-  margin-top: 1.6rem; display: grid; grid-auto-flow: column; gap: 14px; overflow-x: auto; padding-bottom: 0.6rem;
+  flex: none; margin-top: 1.6rem; display: grid; grid-auto-flow: column; gap: 14px; overflow-x: auto; padding-bottom: 0.6rem;
   scroll-snap-type: x proximity; scrollbar-width: thin; scrollbar-color: var(--line-2) transparent;
 }
 .strip .frame { scroll-snap-align: start; position: relative; }
@@ -347,3 +347,16 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   .pitch-foot .btn { justify-content: center; }
   .bignum { display: none; }
 }
+
+/* Payment, inside the approval gate */
+.paybox { flex-basis: 100%; display: grid; gap: 0.7rem; padding-top: 0.8rem; border-top: 1px solid var(--line); }
+.pay-row { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.pay-wallet { display: inline-flex; align-items: center; gap: 0.4rem; font: 500 0.8rem/1 "Geist Mono", monospace; color: var(--text-2); }
+.pay-wallet:empty { display: none; }
+.pay-manual { display: grid; gap: 0.6rem; font-size: 0.88rem; color: var(--text-2); }
+.pay-manual b { color: var(--text); }
+.pm-addr { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.pm-addr code { font: 0.8rem/1.4 "Geist Mono", monospace; padding: 0.4rem 0.6rem; border-radius: 8px; background: var(--bg-2); border: 1px solid var(--line); word-break: break-all; }
+.pm-tx { display: flex; gap: 0.5rem; }
+.pm-tx input { flex: 1; min-width: 0; padding: 0.55rem 0.8rem; border-radius: 999px; border: 1px solid var(--line-2); background: var(--bg-2); outline: none; font: 0.82rem/1 "Geist Mono", monospace; }
+.pm-tx input:focus { border-color: var(--accent); }
