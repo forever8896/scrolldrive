@@ -1291,8 +1291,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404)
 
     def base_url(self):
-        proto = self.headers.get("X-Forwarded-Proto") or "http"
-        return f"{proto}://{self.headers.get('X-Forwarded-Host') or self.headers.get('Host') or 'localhost'}"
+        host = self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or "localhost"
+        local = re.match(r"^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$", host)
+        proto = self.headers.get("X-Forwarded-Proto") or ("http" if local else "https")  # runtimes sit behind TLS
+        return f"{proto}://{host}"
 
     def send_text(self, text, ctype="text/plain; charset=utf-8"):
         data = text.encode()
