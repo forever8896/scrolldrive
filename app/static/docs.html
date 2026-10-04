@@ -25,6 +25,8 @@
       <li><a href="#overview">Overview</a></li>
       <li><a href="#flow">The flow</a></li>
       <li><a href="#agents">The agents</a></li>
+      <li><a href="#director">The director</a></li>
+      <li><a href="#hire">Hire it as an agent</a></li>
       <li><a href="#oneclaw">How it uses 1Claw</a></li>
       <li><a href="#money">The money path</a></li>
       <li><a href="#generation">Generation</a></li>
@@ -82,6 +84,8 @@
       <table>
         <thead><tr><th>Role</th><th>Model</th><th>When</th><th>Sees</th><th>Produces</th></tr></thead>
         <tbody>
+          <tr><td>Director</td><td>Qwen3 Max</td><td>Always</td><td>The conversation, the film's state and allowance</td><td>The next step: which tool to call, and what to tell you</td></tr>
+          <tr><td>Picture editor</td><td>MiMo v2.6 Flash</td><td>After the stills</td><td>Every still and the shot it was meant to be</td><td>A score per still, the defect, and a fix</td></tr>
           <tr><td>Producer</td><td>MiMo v2.6 Flash</td><td>After the pitch</td><td>Pitch, images</td><td>Brief, only the missing questions</td></tr>
           <tr><td>Art director</td><td>MiMo v2.6 Flash</td><td>Storyboard</td><td>Brief, images, controls</td><td>Keyframe prompts, how each is made, camera moves, theme, font</td></tr>
           <tr><td>Copywriter</td><td>Kimi K2</td><td>When the film is approved</td><td>Brief, what each shot shows</td><td>Title, tagline, one line per shot, sections, button</td></tr>
@@ -90,6 +94,30 @@
       </table>
       <p>All four are routed by 1Claw Shroud to OpenRouter. The copywriter writes after the stills exist so it knows what is on screen; it is told never to describe the image or the making of the site. The typographer looks at each still and places text in empty space so it never covers the subject.</p>
       <p>Briefs, images and earlier copy are untrusted input. Every prompt says so, model output is parsed as JSON and validated, and Shroud inspects the traffic.</p>
+    </section>
+
+    <section id="director">
+      <h2>The director</h2>
+      <p>You talk to one agent, the director, in the bar at the bottom of the studio. It runs the studio by calling the same steps the buttons call: read the brief, draft the storyboard, shoot, inspect, reshoot, film, refilm, rewrite, re-lay out, set exact words. One tool per step, and it decides which.</p>
+      <ul>
+        <li><b>It checks its own work.</b> When the stills land, the picture editor scores each one against its shot. The director reshoots a clearly weak still on its own (up to two per film) and tells you what it fixed. Its scores show on the stills.</li>
+        <li><b>It keeps going.</b> Free steps need no permission. After the stills it films, unless you tick "Check with me before filming" or ask to review.</li>
+        <li><b>It works inside a budget it cannot change.</b> You pay once. Every reshoot and refilm comes out of that film's allowance, and the server, not the model, refuses anything past it. The director sees how many reshoots and refilms are left, never what they cost.</li>
+        <li><b>You can interrupt any time.</b> Ask for another angle, calmer words, a poster style; the buttons still work too, and the director picks up from whatever you did.</li>
+      </ul>
+      <p class="note">This is where the 1Claw guardrails earn their place. The director chooses what to spend on; it can only spend from its own 1Claw-held wallet, only to its generation provider, and only within the caps a human set. Autonomy inside hard limits.</p>
+    </section>
+
+    <section id="hire">
+      <h2>Hire it as an agent</h2>
+      <p>Other AI agents can order a film with no human in the loop, paid over <a href="https://x402.org">x402</a>. The director then runs on autopilot: it decides everything, finishes the site, and hands back links a person can use.</p>
+      <ol class="steps">
+        <li><b>Order.</b> <code>POST /api/agent/films</code> with JSON: <code>brief</code> (required), <code>scenes</code> (2 to 6 camera moves), <code>resolution</code> (<code>768P</code> or <code>1080P</code>), optional <code>type</code>, <code>style</code> and <code>images</code> (up to 6 https URLs).</li>
+        <li><b>Pay.</b> The first call answers <code>402</code> with a standard x402 v2 challenge: <code>exact</code> USDC on Base, to the studio's wallet. Retry with <code>PAYMENT-SIGNATURE</code> (or <code>X-PAYMENT</code>); the studio verifies and settles it through the PayAI facilitator. Agents without x402 can send USDC and retry with <code>X-Payment-Tx: &lt;hash&gt;</code>. A 1Claw agent pays with <code>1claw pay</code>, inside its own guardrails.</li>
+        <li><b>Follow.</b> The paid call answers <code>202</code> with an <code>id</code>. Poll <code>GET /api/agent/films/&lt;id&gt;</code>: <code>state</code> is <code>working</code>, <code>done</code> or <code>needs_attention</code>, with the director's notes.</li>
+        <li><b>Deliver.</b> When done, <code>result</code> holds the live <code>site</code>, the <code>film</code> mp4, the <code>zip</code>, a hand-off <code>page</code> (<code>/f/&lt;id&gt;</code>) for a person, and an <code>edit</code> link where they can change the words in the studio.</li>
+      </ol>
+      <p>Discovery: <code>GET /api/agent</code> (the service card, JSON) and <code>/llms.txt</code>. A retried payment never makes a second film: the same authorization returns the same order.</p>
     </section>
 
     <section id="oneclaw">
@@ -244,6 +272,10 @@
           <tr><td><code>POST /api/open</code></td><td>Open a finished film for editing (<code>/studio?run=name</code>)</td></tr>
           <tr><td><code>GET /api/prices</code></td><td>The customer price for each length and quality</td></tr>
           <tr><td><code>GET /api/status</code></td><td>Wallet USDC and Venice balance</td></tr>
+          <tr><td><code>POST /api/chat</code></td><td>Talk to the director (<code>text</code>); it works in the background and the view carries the conversation</td></tr>
+          <tr><td><code>POST /api/agent/settings</code></td><td><code>review: true</code> makes the director ask before filming</td></tr>
+          <tr><td><code>POST /api/agent/films</code></td><td>An agent orders a film (x402, see <a href="#hire">Hire it as an agent</a>)</td></tr>
+          <tr><td><code>GET /api/agent/films/&lt;id&gt;</code></td><td>Order status and, when done, the links</td></tr>
         </tbody>
       </table>
     </section>
@@ -321,7 +353,8 @@
       <ul>
         <li>Payment is in USDC on Base only, from a wallet. No cards yet.</li>
         <li>Shroud no longer routes Anthropic, Google or OpenAI models through OpenRouter (the <code>openrouter/</code> model prefix is rejected), so the roles use other providers' models.</li>
-        <li>Camera moves can drift from their end still; the join check flags it but does not refilm automatically.</li>
+        <li>Camera moves can drift from their end still; the join check flags it, and the director can refilm a move, but it does not judge the moves by eye yet.</li>
+        <li>The studio renders one film at a time; an order that arrives while another film renders waits for the camera.</li>
         <li>Pitch reading and the typographer take 20 seconds to 2 minutes because the model looks at every image.</li>
       </ul>
     </section>

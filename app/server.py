@@ -12,6 +12,7 @@ restart or a closed tab never loses work: reopen the studio and it picks up wher
 LLM calls go through 1Claw Shroud; rendering spends the agent's Venice balance and only
 starts after an explicit approval in the UI.
 """
+import base64
 import json
 import mimetypes
 import os
@@ -21,6 +22,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -28,6 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 APP = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(APP)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
+import agent  # noqa: E402
 import copywriter  # noqa: E402
 import director  # noqa: E402
 import evm  # noqa: E402
@@ -61,7 +64,7 @@ PAID_STEPS = {"/api/shoot", "/api/redo", "/api/film", "/api/refilm"}
 # Optional owner pass for paid steps (header X-Studio-Code), e.g. for scripts.
 ACCESS_CODE = os.environ.get("STUDIO_ACCESS_CODE", "")
 # The AI steps are free to try but rate limited per visitor, to protect the LLM quota.
-LLM_STEPS = {"/api/intake", "/api/storyboard", "/api/rewrite", "/api/layout"}
+LLM_STEPS = {"/api/intake", "/api/storyboard", "/api/rewrite", "/api/layout", "/api/chat"}
 LLM_LIMIT_PER_HOUR = int(os.environ.get("LLM_LIMIT_PER_HOUR", 40))
 RATE = {}
 
@@ -231,6 +234,7 @@ def launch(s, stage, only=None, refilm=None):
     threading.Thread(target=proc.wait, daemon=True).start()  # reap, so pid checks stay truthful
     s["job"] = {"stage": stage, "log": log, "pid": proc.pid, "only": only, "refilm": refilm, "started": time.time()}
     s["error"] = None
+    s.setdefault("agent", {})["waiting"] = "job"  # the director agent picks up when it finishes
     s["phase"] = "shooting" if stage == "keyframes" else "filming"
     save(s)
 
@@ -328,6 +332,10 @@ def view(s):
                       "amount_usd": usd, "amount_units": int(round(usd * 1e6))}
     pay = s.get("payment") or {}
     out["payment"] = {k: pay.get(k) for k in ("kind", "address", "usd", "tx")} if pay else None
+    a = s.get("agent") or {}
+    out["chat"] = [{k: m.get(k) for k in ("who", "text", "at", "tool", "ok", "detail")} for m in (s.get("chat") or [])[-80:]]
+    out["agent"] = {"busy": bool(a.get("busy")), "waiting": a.get("waiting"), "mode": a.get("mode", "chat"),
+                    "inspection": a.get("inspection")}
     return out
 
 
@@ -460,6 +468,682 @@ def showcase():
     }
 
 
+# --- the studio's steps, shared by the buttons and the director agent --------------------------
+
+class Refusal(Exception):
+    """A step that cannot run now; the message is safe to show the customer."""
+    def __init__(self, msg, status=400, **extra):
+        super().__init__(msg)
+        self.status, self.extra = status, extra
+
+
+def core_intake(s, pitch):
+    pitch = str(pitch or "").strip()[:3000]
+    if len(pitch) < 3:
+        raise Refusal("Tell me a little about what we are making.")
+    s["pitch"] = pitch
+    try:
+        b = intake.ask(pitch, s["refs"])
+    except RuntimeError as e:
+        raise Refusal(str(e)[:300], 502)
+    s["brief"], s["answers"] = b, []
+    s["controls"] = {"type": b["type"], "style": b["style"], "scenes": b["scenes"], "resolution": "768P"}
+    save(s)
+    return b
+
+
+def core_storyboard(s, controls=None, brief_edits=None, notes=""):
+    if not s.get("brief"):
+        raise Refusal("Start with a pitch.")
+    if s.get("job") and job_state(s["job"])[0]:
+        raise Refusal("A render is running.", 409)
+    c = {**(s.get("controls") or {}), **{k: v for k, v in (controls or {}).items() if v not in (None, "")}}
+    locked = (s.get("payment") or {}).get("locked") or {}  # an agent paid for this size up front
+    c.update(locked)
+    controls = {"type": c.get("type") if c.get("type") in director.TYPES else "product",
+                "style": c.get("style") if c.get("style") in director.STYLES else "",
+                "scenes": max(director.MIN_SCENES, min(director.MAX_SCENES, int(c.get("scenes") or 3))),
+                "resolution": c.get("resolution") if c.get("resolution") in ("768P", "1080P") else "768P"}
+    s["controls"] = controls
+    for k in ("name", "subject", "mood", "audience", "goal"):
+        if isinstance((brief_edits or {}).get(k), str):
+            s["brief"][k] = brief_edits[k].strip()[:200]
+    b = s["brief"]
+    base = re.sub(r"[^a-z0-9-]+", "-", str(b.get("name") or b.get("subject") or "film").lower()).strip("-")[:28]
+    slug = f"{base or 'film'}-{secrets.token_hex(2)}"
+    brief = intake.director_brief(s["pitch"], b, s["answers"])
+    try:
+        director.direct(slug, brief, refs=s["refs"], ptype=controls["type"], style=controls["style"],
+                        scenes=controls["scenes"], resolution=controls["resolution"],
+                        notes=str(notes or "")[:400] or None)
+    except SystemExit as e:
+        raise Refusal(str(e)[:400], 502)
+    pay = s.get("payment") or {}
+    if pay.get("kind") == "usdc" and not pay.get("used") and \
+            (pay.get("locked") or pay.get("usd", 0) + 1e-9 >= (price_usd({"name": slug}) or 1e9)):
+        pay["board"] = slug  # paid but nothing generated yet: the payment moves to the new storyboard
+    s["name"], s["phase"], s["job"], s["error"] = slug, "board", None, None
+    save(s)
+
+
+def core_start(s, stage, only=None, refilm=None):
+    if not (is_paid(s) or s.get("code_ok")):
+        raise Refusal("This step needs payment first.", 402, need_payment=True)
+    cfg = load_cfg(s["name"])
+    p = prices()
+    n = len(cfg["keyframes"])
+    clip = p["clip_usd"][cfg["video"].get("resolution", "768P")]
+    need = (p["image_usd"] * (1 if only else n) if stage == "keyframes" else clip * (1 if refilm else n - 1))
+    with LOCK:
+        if any_running():
+            raise Refusal("Another film is rendering. Try again in a minute.", 409, busy=True)
+        try:
+            topup_if_needed(need)
+        except Exception as e:  # noqa: BLE001
+            raise Refusal(f"The studio's generation balance is low and the agent could not top it up: {str(e)[:200]}", 503)
+        launch(s, stage, only, refilm)
+        if s.get("payment"):
+            s["payment"]["used"] = True
+            save(s)
+
+
+def core_shoot(s):
+    if not s.get("name"):
+        raise Refusal("Shooting needs a storyboard.")
+    if s["phase"] not in ("board", "keyframes"):
+        raise Refusal("The stills are already shot.", 409)
+    core_start(s, "keyframes")
+
+
+def core_redo(s, kid, prompt=""):
+    if not s.get("name"):
+        raise Refusal("No storyboard.")
+    cfg = load_cfg(s["name"])
+    kf = next((k for k in cfg["keyframes"] if k["id"] == str(kid or "").upper()), None)
+    if not kf:
+        raise Refusal("Unknown still.")
+    if s["phase"] != "keyframes":
+        raise Refusal("Stills can be reshot before the film is made.", 409)
+    if allowance(s["name"])["reshoots"] < 1:
+        raise Refusal("This film has used all of its reshoots.", 409)
+    prompt = str(prompt or "").strip()
+    if prompt:
+        kf["prompt"] = re.sub(r"\s*[—–]\s*", ", ", prompt)[:2000]
+        save_cfg(cfg)
+    core_start(s, "keyframes", only=kf["id"])
+
+
+def core_refilm(s, move, prompt=""):
+    """Film one camera move again after delivery, optionally with a new direction.
+    The words and layout stay; the site and zip are rebuilt with the new move."""
+    if not s.get("name"):
+        raise Refusal("No film.")
+    if s["phase"] != "deliver":
+        raise Refusal("Moves can be refilmed once the film is made.", 409)
+    cfg = load_cfg(s["name"])
+    move = str(move or "").upper().replace("->", "-")
+    if not any(f"{a['id']}-{b['id']}" == move for a, b in zip(cfg["keyframes"], cfg["keyframes"][1:])):
+        raise Refusal("Unknown camera move.")
+    if allowance(s["name"])["refilms"] < 1:
+        raise Refusal("This film has used all of its refilms.", 409)
+    prompt = re.sub(r"\s*[—–]\s*", ", ", str(prompt or "").strip())[:800]
+    if prompt:
+        if not prompt.lower().startswith("one continuous"):
+            prompt = "One continuous slow camera move, no cuts: " + prompt
+        cfg["transitions"][move] = prompt
+        save_cfg(cfg)
+    core_start(s, "film", refilm=move)
+
+
+def core_film(s):
+    if not s.get("name") or s["phase"] != "keyframes":
+        raise Refusal("Filming starts once the stills are in.", 409)
+    if any(not k["url"] for k in board_view(s["name"])["keyframes"]):
+        raise Refusal("Some stills are missing; reshoot them first.", 409)
+    if not (is_paid(s) or s.get("code_ok")):
+        raise Refusal("This step needs payment first.", 402, need_payment=True)
+    if any_running():
+        raise Refusal("Another film is rendering. Try again in a minute.", 409, busy=True)
+    cfg = load_cfg(s["name"])
+    try:  # the words are written once the pictures exist
+        copy = copywriter.write(cfg)
+        cfg.setdefault("copy_history", []).append(cfg.get("copy"))
+        cfg["copy"] = copy
+        save_cfg(cfg)
+    except RuntimeError:
+        pass  # the director's copy stays; it can be rewritten after delivery
+    core_start(s, "film")
+    name = s["name"]
+
+    def typeset():  # while the camera rolls, the typographer lays out the words on the stills
+        try:
+            lay = typographer.lay_out(load_cfg(name))
+            c = load_cfg(name)
+            c["copy"]["layout"] = lay
+            save_cfg(c)
+            rebuild_site(c)
+        except Exception:  # noqa: BLE001  the default layout stays
+            pass
+    threading.Thread(target=typeset, daemon=True).start()
+
+
+def _film_cfg(s):
+    if not s.get("name"):
+        raise Refusal("No film.")
+    return load_cfg(s["name"])
+
+
+def core_rewrite(s, note=""):
+    cfg = _film_cfg(s)
+    try:
+        copy = copywriter.write(cfg, note=str(note or "")[:400])
+    except RuntimeError as e:
+        raise Refusal(str(e)[:300], 502)
+    cfg.setdefault("copy_history", []).append(cfg.get("copy"))
+    cfg["copy"] = copy
+    save_cfg(cfg)
+    rebuild_site(cfg)
+    return copy
+
+
+def core_layout(s, note=""):
+    cfg = _film_cfg(s)
+    try:
+        lay = typographer.lay_out(cfg, note=str(note or "")[:400])
+    except RuntimeError as e:
+        raise Refusal(str(e)[:300], 502)
+    cfg.setdefault("copy_history", []).append(json.loads(json.dumps(cfg.get("copy"))))  # a snapshot, not a reference
+    cfg["copy"]["layout"] = lay
+    save_cfg(cfg)
+    rebuild_site(cfg)
+    return cfg["copy"]
+
+
+def core_set_copy(s, new_copy, snapshot=False):
+    cfg = _film_cfg(s)
+    if snapshot:
+        cfg.setdefault("copy_history", []).append(json.loads(json.dumps(cfg.get("copy"))))
+    cfg["copy"] = clean_copy(new_copy or {}, cfg)
+    save_cfg(cfg)
+    rebuild_site(cfg)
+    return cfg["copy"]
+
+
+def core_set_words(s, args):
+    """The agent's exact edits: only the fields it names change."""
+    cfg = _film_cfg(s)
+    cur = json.loads(json.dumps(cfg.get("copy") or {}))
+    cur.setdefault("beats", [a.get("text", "") for a in cur.get("acts", [])])
+    for k in ("title", "tagline"):
+        if isinstance(args.get(k), str):
+            cur[k] = args[k]
+    cta = dict(cur.get("cta") or {})
+    if isinstance(args.get("cta_label"), str):
+        cta["label"] = args["cta_label"]
+    if isinstance(args.get("cta_href"), str):
+        cta["href"] = args["cta_href"]
+    cur["cta"] = cta
+    if isinstance(args.get("beats"), list):
+        cur["beats"] = [str(b) for b in args["beats"]]
+    return core_set_copy(s, cur, snapshot=True)
+
+
+# --- the director agent ----------------------------------------------------------------------------
+
+AGENT_SELF_RESHOOTS = int(os.environ.get("AGENT_SELF_RESHOOTS", 2))  # reshoots on its own judgement, per film
+AGENT_STEPS_PER_TURN = 8
+AGENT_STEPS_PER_FILM = int(os.environ.get("AGENT_STEPS_PER_FILM", 90))
+CHAT_LOCK = threading.RLock()
+ORDER_LOCK = threading.Lock()
+WAITING_TOOLS = {"shoot", "reshoot", "film", "refilm"}
+
+
+def rendering(s):
+    return bool(s.get("job")) and job_state(s["job"])[0]
+
+
+def agent_of(s):
+    return s.setdefault("agent", {"busy": False, "waiting": None, "mode": "chat", "self_reshoots": 0,
+                                  "steps": 0, "inspection": None, "events": []})
+
+
+def chat(s, who, text, **extra):
+    """who: you (the customer), agent (what it says), action (what it did, shown small)."""
+    if not text:
+        return
+    with CHAT_LOCK:
+        s.setdefault("chat", []).append({"who": who, "text": str(text)[:1500], "at": time.time(), **extra})
+        s["chat"] = s["chat"][-200:]
+        save(s)
+
+
+def film_state(s):
+    """What the agent sees: the film, the money rules, never the costs."""
+    a = agent_of(s)
+    st = {"phase": s["phase"], "pitch": s.get("pitch", "")[:1500], "images_attached": len(s.get("refs") or []),
+          "paid": is_paid(s) or bool(s.get("code_ok")), "last_error": s.get("error"),
+          "rendering_now": (s["job"]["stage"] if rendering(s) else None)}
+    if s.get("brief"):
+        b = s["brief"]
+        st["brief"] = {k: b.get(k) for k in ("name", "subject", "mood", "audience", "goal", "type", "style", "scenes")}
+        st["open_questions"] = [q.get("question") for q in b.get("questions") or []][:4]
+    if s.get("controls"):
+        st["controls"] = s["controls"]
+    if s.get("name") and os.path.exists(cfg_path(s["name"])):
+        bv = board_view(s["name"])
+        st["price_usd"] = price_usd(s)
+        st["title"] = bv["copy"].get("title")
+        st["shots"] = [{"id": k["id"], "shot": copywriter.shot_gist(k["prompt"]), "done": bool(k["url"])} for k in bv["keyframes"]]
+        st["moves"] = [{"id": m["id"], "filmed": bool(m["url"])} for m in bv["moves"]]
+        st["allowance_left"] = allowance(s["name"])
+        st["your_reshoots_left"] = max(0, AGENT_SELF_RESHOOTS - a.get("self_reshoots", 0))
+        if bv["site"]:
+            st["words"] = {k: bv["copy"].get(k) for k in ("title", "tagline", "beats", "cta")}
+            st["site_ready"] = True
+    if a.get("inspection"):
+        st["your_inspection"] = a["inspection"]
+    if (s.get("payment") or {}).get("locked"):
+        st["paid_for"] = s["payment"]["locked"]
+    if a.get("mode") != "autopilot":
+        st["customer_wants_to_review_stills_before_filming"] = bool(a.get("review"))
+    return st
+
+
+def conversation(s):
+    lines = []
+    for m in (s.get("chat") or [])[-30:]:
+        who = {"you": "customer", "agent": "you said", "action": "result"}.get(m["who"], m["who"])
+        lines.append(f"[{who}] {m['text']}")
+    return lines or ["(nothing yet)"]
+
+
+def run_tool(s, tool, args):
+    """Run one tool for the agent. Returns (result text for the agent, waits_for_render)."""
+    a = agent_of(s)
+    if tool == "brief":
+        b = core_intake(s, args.get("pitch") or s.get("pitch"))
+        s["phase"] = "confirm"
+        save(s)
+        return (f"Brief: {json.dumps({k: b.get(k) for k in ('name', 'subject', 'mood', 'audience', 'goal', 'type', 'style', 'scenes')})}. "
+                f"Open questions: {[q['question'] for q in b.get('questions') or []]}"), False
+    if tool == "storyboard":
+        if not s.get("brief"):
+            core_intake(s, s.get("pitch"))
+        core_storyboard(s, {k: args.get(k) for k in ("type", "style", "scenes", "resolution")}, notes=args.get("notes", ""))
+        a["inspection"] = None
+        a["self_reshoots"] = 0
+        bv = board_view(s["name"])
+        shots = "; ".join(f"{k['id']}: {copywriter.shot_gist(k['prompt'])}" for k in bv["keyframes"])
+        paid = is_paid(s) or s.get("code_ok")
+        return (f"Storyboard '{bv['copy'].get('title')}' with {len(bv['keyframes'])} stills: {shots}. "
+                + ("Already paid." if paid else f"Price ${price_usd(s):.2f}; the customer has not paid yet.")), False
+    if tool == "shoot":
+        core_shoot(s)
+        a["inspection"] = None
+        return "Shooting the stills now.", True
+    if tool == "inspect":
+        if not s.get("name"):
+            raise Refusal("No stills yet.")
+        rd = run_dir(s["name"])
+        stills = [(k["id"], scrollsite.keyframe_path(rd, k["id"])) for k in load_cfg(s["name"])["keyframes"]]
+        stills = [(i, p) for i, p in stills if p]
+        if not stills:
+            raise Refusal("No stills yet.")
+        try:
+            res = agent.critique(load_cfg(s["name"]), stills)
+        except agent.AgentError as e:
+            raise Refusal(f"Could not inspect: {e}", 502)
+        a["inspection"] = res
+        save(s)
+        return "Scores: " + "; ".join(f"{x['id']} {x['score']}/10{(' (' + x['issue'] + ')') if x['issue'] else ''}"
+                                       for x in res["shots"]) + f". {res['overall']}", False
+    if tool == "reshoot":
+        mine = s.get("_turn_trigger") != "customer"
+        if mine and a.get("self_reshoots", 0) >= AGENT_SELF_RESHOOTS:
+            raise Refusal(f"You have used your {AGENT_SELF_RESHOOTS} reshoots on your own judgement; ask the customer.", 409)
+        core_redo(s, args.get("id"), args.get("prompt", ""))
+        if mine:
+            a["self_reshoots"] = a.get("self_reshoots", 0) + 1
+        a["inspection"] = None
+        chat(s, "action", f"Reshooting still {str(args.get('id')).upper()}: {str(args.get('reason') or '')[:200]}",
+             tool="reshoot")
+        return f"Reshooting {str(args.get('id')).upper()}.", True
+    if tool == "film":
+        core_film(s)
+        return "Writing the words, then filming the camera moves.", True
+    if tool == "refilm":
+        core_refilm(s, args.get("id"), args.get("prompt", ""))
+        return f"Refilming {str(args.get('id')).upper()}.", True
+    if tool == "rewrite":
+        c = core_rewrite(s, args.get("note", ""))
+        return f"New words: title '{c.get('title')}', tagline '{c.get('tagline')}'.", False
+    if tool == "layout":
+        c = core_layout(s, args.get("note", ""))
+        return f"New layout: {(c.get('layout') or {}).get('note', 'done')}", False
+    if tool == "set_words":
+        c = core_set_words(s, args)
+        return f"Words set: title '{c.get('title')}', tagline '{c.get('tagline')}'.", False
+    return "", False
+
+
+TOOL_LABELS = {"brief": "Read the pitch", "storyboard": "Drafted the storyboard", "inspect": "Checked every still",
+               "rewrite": "Rewrote the words", "layout": "Re-laid out the words", "set_words": "Changed the words",
+               "shoot": "Started shooting the stills", "film": "Started filming", "refilm": "Started refilming a move"}
+
+
+def agent_turn(s, trigger):
+    """Let the agent work until it waits for a render, the customer, or has nothing to do."""
+    a = agent_of(s)
+    s["_turn_trigger"] = trigger
+    try:
+        for _ in range(AGENT_STEPS_PER_TURN):
+            if a.get("steps", 0) >= AGENT_STEPS_PER_FILM:
+                chat(s, "agent", "I have done a lot of work on this film already; tell me what to change next.")
+                a["waiting"] = "customer"
+                return
+            a["steps"] = a.get("steps", 0) + 1
+            try:
+                d = agent.decide(film_state(s), conversation(s), mode=a.get("mode", "chat"),
+                                 self_reshoots=AGENT_SELF_RESHOOTS)
+            except agent.AgentError as e:
+                chat(s, "agent", "I lost my train of thought for a moment. Say anything to wake me.")
+                s["error"] = str(e)[:300]
+                a["waiting"] = "customer"
+                return
+            if d["say"]:
+                chat(s, "agent", d["say"])
+            if d["tool"] in ("ask", "done"):
+                a["waiting"] = "customer"
+                if d["tool"] == "done" and a.get("mode") == "autopilot":
+                    a["finished"] = s["phase"] == "deliver"
+                return
+            try:
+                result, waits = run_tool(s, d["tool"], d["args"])
+            except Refusal as e:
+                if e.extra.get("busy"):
+                    if rendering(s):
+                        chat(s, "action", f"{d['tool']} waits: this film is still rendering.", tool=d["tool"], ok=False)
+                        return
+                    chat(s, "action", "Waiting for the camera: another film is rendering.", tool=d["tool"])
+                    a["waiting"] = "slot"
+                    return
+                chat(s, "action", f"{d['tool']} refused: {e}", tool=d["tool"], ok=False)
+                if e.extra.get("need_payment") and a.get("mode") == "chat":
+                    a["waiting"] = "payment"
+                continue
+            if d["tool"] in TOOL_LABELS:
+                chat(s, "action", TOOL_LABELS[d["tool"]], tool=d["tool"], detail=result[:600])
+            if waits:
+                a["waiting"] = "job"
+                return
+        a["waiting"] = "customer"
+    finally:
+        if rendering(s):
+            a["waiting"] = "job"  # whatever was said, the render's outcome still wakes the agent
+        a["busy"] = False
+        s.pop("_turn_trigger", None)
+        save(s)
+
+
+def kick(s, trigger="customer"):
+    """Wake the agent in the background. 'customer' when a person spoke or acted."""
+    a = agent_of(s)
+    with CHAT_LOCK:
+        if a.get("busy"):
+            a["again"] = trigger
+            return
+        a["busy"], a["waiting"] = True, None
+        save(s)
+
+    def run():
+        t = trigger
+        while True:
+            agent_turn(s, t)
+            with CHAT_LOCK:
+                t = a.pop("again", None)
+                if not t:
+                    return
+                a["busy"] = True
+    threading.Thread(target=run, daemon=True).start()
+
+
+def render_outcome(s):
+    """A finished render, told to the agent as a result line."""
+    if s.get("error"):
+        return f"The render stopped: {s['error']}"
+    if s["phase"] == "keyframes":
+        b = board_view(s["name"])
+        done = sum(1 for k in b["keyframes"] if k["url"])
+        return f"The stills are in ({done} of {len(b['keyframes'])}). Inspect them."
+    if s["phase"] == "deliver":
+        return "The film is finished; the site and zip are ready."
+    return f"The render ended; the film is at '{s['phase']}'."
+
+
+def watcher():
+    """Wakes agents whose render finished, and retries ones waiting for the camera."""
+    while True:
+        time.sleep(3)
+        for s in list(SESSIONS.values()):
+            a = s.get("agent") or {}
+            try:
+                if a.get("waiting") == "job" and not a.get("busy") and s.get("job"):
+                    settle(s)
+                    if not job_state(s["job"])[0]:
+                        a["waiting"] = None
+                        chat(s, "action", render_outcome(s), tool="render", ok=not s.get("error"))
+                        kick(s, "self")
+                elif a.get("waiting") == "slot" and not a.get("busy") and not any_running():
+                    a["waiting"] = None
+                    kick(s, "self")
+            except Exception as e:  # noqa: BLE001  one broken session must not stop the others
+                sys.stderr.write(f"watcher: {s.get('id')}: {e}\n")
+
+
+# --- films ordered by other agents (x402) ----------------------------------------------------------
+
+FACILITATOR = os.environ.get("X402_FACILITATOR", "https://facilitator.payai.network")
+ORDER_FIELDS = "brief (required), scenes 2-6, resolution 768P|1080P, type, style, images (up to 6 https URLs)"
+
+
+def order_terms(data):
+    """The film an agent asks for, and its price. Raises Refusal on a bad order."""
+    brief = str(data.get("brief") or "").strip()
+    if len(brief) < 10:
+        raise Refusal(f"Describe the site in 'brief'. Fields: {ORDER_FIELDS}.")
+    scenes = max(director.MIN_SCENES, min(director.MAX_SCENES, int(data.get("scenes") or 3)))
+    res = data.get("resolution") if data.get("resolution") in ("768P", "1080P") else "768P"
+    images = [u for u in (data.get("images") or []) if isinstance(u, str) and u.startswith("https://")][:MAX_REFS]
+    terms = {"brief": brief[:3000], "scenes": scenes, "resolution": res, "images": images,
+             "type": data.get("type") if data.get("type") in director.TYPES else None,
+             "style": data.get("style") if data.get("style") in director.STYLES else None}
+    terms["price_usd"] = customer_prices()["prices"][res][scenes]
+    return terms
+
+
+def x402_requirement(terms, url):
+    return {"scheme": "exact", "network": "eip155:8453", "amount": str(int(round(terms["price_usd"] * 1e6))),
+            "asset": USDC, "payTo": PAY_TO, "maxTimeoutSeconds": 600,
+            "extra": {"name": "USD Coin", "version": "2"}, "resource": url}
+
+
+def x402_challenge(terms, url):
+    req = x402_requirement(terms, url)
+    req.pop("resource")
+    return {"x402Version": 2, "error": "Payment required",
+            "resource": {"url": url, "mimeType": "application/json",
+                         "description": f"A scroll-driven film website, {terms['scenes']} camera moves at {terms['resolution']}, "
+                                        "made end to end by the Frameline director agent."},
+            "accepts": [req]}
+
+
+def facilitate(step, payload, requirement):
+    body = {"x402Version": payload.get("x402Version", 2), "paymentPayload": payload, "paymentRequirements": requirement}
+    req = urllib.request.Request(f"{FACILITATOR}/{step}", data=json.dumps(body).encode(), method="POST",
+                                 headers={"Content-Type": "application/json", "User-Agent": "frameline/0.3"})
+    try:
+        with urllib.request.urlopen(req, timeout=90) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        try:
+            return json.loads(e.read())
+        except ValueError:
+            return {"isValid": False, "success": False, "invalidReason": f"facilitator answered {e.code}"}
+
+
+def take_x402(header_value, terms, url):
+    """Verify and settle an x402 'exact' payment on Base. Returns a payment record."""
+    try:
+        payload = json.loads(base64.b64decode(header_value + "=" * (-len(header_value) % 4)))
+    except ValueError:
+        raise Refusal("The payment header is not base64 JSON.", 402)
+    want = x402_requirement(terms, url)
+    if payload.get("x402Version", 2) == 1:  # v1 clients: same payment, older field names
+        want = {"scheme": "exact", "network": "base", "maxAmountRequired": want["amount"], "resource": url,
+                "description": "Frameline film", "mimeType": "application/json", "payTo": PAY_TO,
+                "maxTimeoutSeconds": 600, "asset": USDC, "extra": want["extra"]}
+    else:
+        want.pop("resource")
+    auth = ((payload.get("payload") or {}).get("authorization") or {})
+    if str(auth.get("to", "")).lower() != PAY_TO.lower():
+        raise Refusal("That payment is not to the studio.", 402)
+    if int(auth.get("value") or 0) < int(round(terms["price_usd"] * 1e6)):
+        raise Refusal(f"This film is {terms['price_usd']:.2f} USDC.", 402)
+    nonce = str(auth.get("nonce") or "").lower()
+    v = facilitate("verify", payload, want)
+    if not v.get("isValid"):
+        raise Refusal(f"The payment did not verify: {v.get('invalidReason') or v}", 402)
+    st = facilitate("settle", payload, want)
+    if not st.get("success") or not st.get("transaction"):
+        raise Refusal(f"The payment did not settle: {st.get('errorReason') or st}", 402)
+    return {"kind": "usdc", "via": "x402", "address": str(st.get("payer") or auth.get("from") or "").lower(),
+            "usd": int(auth["value"]) / 1e6, "tx": str(st["transaction"]).lower(), "nonce": nonce,
+            "receipt": {"success": True, "transaction": st["transaction"], "network": st.get("network", "eip155:8453"),
+                        "payer": st.get("payer")}}
+
+
+def take_transfer(tx, terms):
+    """A plain USDC transfer to the studio wallet, for agents without x402."""
+    tx = str(tx or "").strip().lower()
+    if not re.fullmatch(r"0x[0-9a-f]{64}", tx):
+        raise Refusal("X-Payment-Tx must be a transaction hash.", 402)
+    got = evm.usdc_payment(tx, USDC, PAY_TO)
+    if got is None:
+        raise Refusal("That transfer is not confirmed yet; retry in a few seconds.", 402, pending=True)
+    if not got["ok"]:
+        raise Refusal(got["reason"], 402)
+    if time.time() - got["block_time"] > PAYMENT_MAX_AGE_HOURS * 3600:
+        raise Refusal(f"That payment is older than {PAYMENT_MAX_AGE_HOURS:g} hours.", 402)
+    if got["units"] < int(round(terms["price_usd"] * 1e6)):
+        raise Refusal(f"That transfer is {got['units'] / 1e6:.2f} USDC; this film is {terms['price_usd']:.2f}.", 402)
+    return {"kind": "usdc", "via": "transfer", "address": got["from"], "usd": got["units"] / 1e6, "tx": tx}
+
+
+def fetch_image(url):
+    req = urllib.request.Request(url, headers={"User-Agent": "frameline/0.3"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        raw = r.read(15 * 1024 * 1024 + 1)
+    if len(raw) > 15 * 1024 * 1024:
+        raise ValueError("over 15 MB")
+    os.makedirs(UPLOADS, exist_ok=True)
+    pid = secrets.token_hex(6)
+    src, dst = os.path.join(UPLOADS, f"{pid}.src"), os.path.join(UPLOADS, f"{pid}.jpg")
+    open(src, "wb").write(raw)
+    r = subprocess.run([scrollsite.FFMPEG, "-y", "-loglevel", "error", "-i", src, "-vf", "scale='min(1600,iw)':-2",
+                        "-q:v", "3", dst], capture_output=True)
+    os.remove(src)
+    if r.returncode != 0 or not os.path.exists(dst):
+        raise ValueError("not an image")
+    return dst
+
+
+def start_order(terms, payment, base):
+    """A paid order becomes a session the director agent runs on autopilot."""
+    s = new_session()
+    s["pitch"] = terms["brief"]
+    s["controls"] = {"type": terms["type"] or "product", "style": terms["style"] or "", "scenes": terms["scenes"],
+                     "resolution": terms["resolution"]}
+    s["payment"] = {**{k: v for k, v in payment.items() if k != "receipt"}, "board": None,
+                    "locked": {"scenes": terms["scenes"], "resolution": terms["resolution"]}}
+    s["order"] = {"at": time.time(), "terms": terms}
+    a = agent_of(s)
+    a["mode"] = "autopilot"
+    save(s)
+
+    def go():
+        notes = []
+        for u in terms["images"]:
+            try:
+                s["refs"].append(fetch_image(u))
+            except Exception as e:  # noqa: BLE001
+                notes.append(f"{u[:80]} could not be used ({str(e)[:60]})")
+        save(s)
+        paid = "on the owner's pass, no charge" if payment["kind"] == "owner" else f"and paid {payment['usd']:.2f} USDC"
+        chat(s, "you", f"[An AI agent ordered this film {paid}.] {terms['brief']}"
+             + (f"\nWanted: type {terms['type']}." if terms["type"] else "") + (f" Look: {terms['style']}." if terms["style"] else "")
+             + (f"\nImages attached: {len(s['refs'])}." if s["refs"] else "") + (f" Not usable: {'; '.join(notes)}." if notes else ""))
+        kick(s, "customer")
+    threading.Thread(target=go, daemon=True).start()
+    return s
+
+
+def order_view(s, base):
+    a = s.get("agent") or {}
+    running = rendering(s)
+    done = s["phase"] == "deliver" and not running and not a.get("busy")
+    stuck = not done and not running and not a.get("busy") and a.get("waiting") == "customer"
+    step = {"pitch": "Reading the brief", "questions": "Reading the brief", "confirm": "Planning the shots",
+            "board": "Storyboard drafted", "shooting": "Shooting the stills", "keyframes": "Checking the stills",
+            "filming": "Filming the camera moves", "deliver": "Finishing" if not done else "Done"}.get(s["phase"], s["phase"])
+    out = {"id": s["id"], "state": "done" if done else "needs_attention" if stuck else "working", "step": step,
+           "notes": [m["text"] for m in (s.get("chat") or []) if m["who"] in ("agent", "action")][-12:],
+           "page": f"{base}/f/{s['id']}", "edit": f"{base}/studio?session={s['id']}"}
+    if s.get("name") and os.path.exists(cfg_path(s["name"])):
+        b = board_view(s["name"])
+        rd = run_dir(s["name"])
+        out["title"] = b["copy"].get("title")
+        out["stills"] = [base + k["url"].split("?")[0] for k in b["keyframes"] if k["url"]]
+        if b["site"]:
+            out["result"] = {"site": base + b["site"].split("?")[0], "zip": base + b["zip"] if b["zip"] else None,
+                             "film": base + run_url(os.path.join(rd, "site", "film.mp4")),
+                             "film_mobile": base + run_url(os.path.join(rd, "site", "film-mobile.mp4")),
+                             "poster": base + run_url(os.path.join(rd, "site", "poster.jpg")),
+                             "page": out["page"], "edit": out["edit"]}
+    if s.get("error") and not done:
+        out["error"] = s["error"]
+    return out
+
+
+def llms_txt(base):
+    c = service_card(base)
+    return (f"# Frameline\n\n> {c['what']}\n\n## Hire it (for agents)\n\n"
+            f"- Order: POST {c['order']['url']} with JSON: {c['order']['body']}.\n"
+            f"- Pay: {c['order']['payment']}\n- Status: GET {c['status']['url']} ({c['status']['states']})\n"
+            f"- Time: {c['time']}\n- Service card (JSON): {base}/api/agent\n\n## About\n\n{c['operator']}\n")
+
+
+def service_card(base):
+    """What another agent needs to know to hire the studio."""
+    p = customer_prices()["prices"]
+    return {
+        "name": "Frameline", "kind": "x402 service",
+        "what": "Make a scroll-driven cinematic website from a brief: stills, a continuous film between them, "
+                "words laid over it. Delivered as a hosted page, a live site, an mp4 and a zip.",
+        "order": {"method": "POST", "url": f"{base}/api/agent/films", "body": ORDER_FIELDS,
+                  "payment": "x402 v2 'exact' USDC on Base (eip155:8453): POST without payment for the 402 challenge, "
+                             "then again with PAYMENT-SIGNATURE (or X-PAYMENT). Or send USDC to payTo and retry "
+                             "with header X-Payment-Tx: <hash>.",
+                  "pay_to": PAY_TO, "asset": USDC},
+        "prices_usd": {res: {f"{n} moves": v for n, v in t.items()} for res, t in p.items()},
+        "status": {"method": "GET", "url": f"{base}/api/agent/films/<id>",
+                   "states": "working, done, needs_attention; when done, 'result' has site, film, zip and the page "
+                             "to hand to a person, who can edit the words at 'edit'."},
+        "time": "About 5 to 10 minutes per film.",
+        "operator": "The studio is itself a 1Claw agent: it signs with 1Claw-held keys, pays its own generation bills "
+                    "within 1Claw guardrails, and keeps its payment ledger in 1Claw memory.",
+    }
+
+
 # --- HTTP ---------------------------------------------------------------------------------------
 
 class Handler(BaseHTTPRequestHandler):
@@ -469,9 +1153,11 @@ class Handler(BaseHTTPRequestHandler):
         if "/api/" in (args[0] if args else "") and "/api/events" not in (args[0] if args else ""):
             sys.stderr.write("%s\n" % (fmt % args))
 
-    def send_json(self, obj, status_code=200):
+    def send_json(self, obj, status_code=200, headers=None):
         data = json.dumps(obj).encode()
         self.send_response(status_code)
+        for k, v in (headers or {}).items():
+            self.send_header(k, v)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
@@ -540,6 +1226,16 @@ class Handler(BaseHTTPRequestHandler):
             for prefix, base in (("/static/", STATIC), ("/runs/", RUNS), ("/uploads/", UPLOADS)):
                 if p.startswith(prefix):
                     return self.send_file(self.safe_join(base, p[len(prefix):]))
+            if p in ("/api/agent", "/.well-known/x402"):
+                return self.send_json(service_card(self.base_url()))
+            if p == "/llms.txt":
+                return self.send_text(llms_txt(self.base_url()))
+            m = re.fullmatch(r"/api/agent/films/([0-9a-f]{16})", p)
+            if m:
+                s = SESSIONS.get(m[1])
+                return self.send_json(order_view(s, self.base_url())) if s else self.send_json({"error": "No such film."}, 404)
+            if re.fullmatch(r"/f/[0-9a-f]{16}", p):
+                return self.send_file(os.path.join(STATIC, "film.html"))
             if p == "/api/runs":
                 return self.send_json({"runs": list_runs()})
             if p == "/api/status":
@@ -571,10 +1267,14 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(self.body() or b"{}")
             if p == "/api/open":
                 return self.api_open(data)
+            if p == "/api/agent/films":
+                return self.api_order(data)
             s = self.session(q, data)
             if not s:
                 return self.send_json({"error": "Unknown session. Reload the page."}, 400)
-            handler = {"/api/ref/remove": self.api_ref_remove, "/api/intake": self.api_intake,
+            if self.has_code():
+                s["code_ok"] = True
+            handler = {"/api/chat": self.api_chat, "/api/agent/settings": self.api_agent_settings, "/api/ref/remove": self.api_ref_remove, "/api/intake": self.api_intake,
                        "/api/answer": self.api_answer, "/api/storyboard": self.api_storyboard,
                        "/api/shoot": self.api_shoot, "/api/redo": self.api_redo, "/api/refilm": self.api_refilm, "/api/film": self.api_film,
                        "/api/copy": self.api_copy, "/api/layout": self.api_layout, "/api/undo": self.api_undo, "/api/rewrite": self.api_rewrite, "/api/back": self.api_back,
@@ -584,9 +1284,81 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"error": "This step needs payment first.", "need_payment": True}, 402)
             if handler:
                 return handler(s, data)
+        except Refusal as e:
+            return self.send_json({"error": customer_error(str(e)), **e.extra}, e.status)
         except Exception as e:  # noqa: BLE001  surface errors to the UI instead of dropping the socket
             return self.send_json({"error": f"{type(e).__name__}: {e}"[:400]}, 500)
         self.send_error(404)
+
+    def base_url(self):
+        proto = self.headers.get("X-Forwarded-Proto") or "http"
+        return f"{proto}://{self.headers.get('X-Forwarded-Host') or self.headers.get('Host') or 'localhost'}"
+
+    def send_text(self, text, ctype="text/plain; charset=utf-8"):
+        data = text.encode()
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def api_order(self, data):
+        """Another agent orders a film. No payment: the x402 challenge. With payment: the film starts."""
+        try:
+            terms = order_terms(data)
+        except Refusal as e:
+            return self.send_json({"error": str(e), "service": service_card(self.base_url())}, e.status)
+        base = self.base_url()
+        url = base + "/api/agent/films"
+        sig = self.headers.get("PAYMENT-SIGNATURE") or self.headers.get("X-PAYMENT")
+        txh = self.headers.get("X-Payment-Tx")
+        extra = {}
+        try:
+            if self.has_code():
+                payment = {"kind": "owner", "address": "access-code", "usd": 0}
+            elif sig:
+                try:
+                    peek = json.loads(base64.b64decode(sig + "=" * (-len(sig) % 4)))
+                    nonce = str(((peek.get("payload") or {}).get("authorization") or {}).get("nonce") or "").lower()
+                except ValueError:
+                    nonce = ""
+                with ORDER_LOCK:
+                    again = next((x for x in SESSIONS.values() if nonce and (x.get("payment") or {}).get("nonce") == nonce), None)
+                    if again:  # a retry of a payment already taken: the same film
+                        return self.send_json(order_view(again, base), 202)
+                    payment = take_x402(sig, terms, url)
+                    self.record_payment(payment)
+                extra["PAYMENT-RESPONSE"] = base64.b64encode(json.dumps(payment["receipt"]).encode()).decode()
+            elif txh:
+                with ORDER_LOCK:
+                    if ledger.is_used(str(txh).strip().lower()):
+                        return self.send_json({"error": "That payment has already been used."}, 409)
+                    payment = take_transfer(txh, terms)
+                    self.record_payment(payment)
+            else:
+                ch = x402_challenge(terms, url)
+                return self.send_json({**ch, "price_usd": terms["price_usd"], "service": service_card(base)}, 402,
+                                      {"PAYMENT-REQUIRED": base64.b64encode(json.dumps(ch).encode()).decode()})
+        except Refusal as e:
+            return self.send_json({"error": str(e), **e.extra}, e.status)
+        except ledger.LedgerUnavailable as e:
+            return self.send_json({"error": f"Could not check the payment record right now; retry. ({e})"}, 503)
+        s = start_order(terms, payment, base)
+        return self.send_json(order_view(s, base), 202, extra)
+
+    def record_payment(self, payment):
+        try:
+            ledger.record({"tx": payment["tx"], "from": payment["address"], "usd": payment["usd"], "via": payment["via"],
+                           "session": None, "board": "agent-order", "at": time.time()})
+        except ledger.LedgerUnavailable as e:  # the money is in; the film goes ahead, and this is logged
+            sys.stderr.write(f"ledger: could not record {payment['tx']}: {e}\n")
+
+    def api_agent_settings(self, s, data):
+        a = agent_of(s)
+        if "review" in data:
+            a["review"] = bool(data["review"])
+        save(s)
+        return self.send_json(view(s))
 
     def client_ip(self):
         fwd = self.headers.get("X-Forwarded-For", "")
@@ -632,7 +1404,13 @@ class Handler(BaseHTTPRequestHandler):
         s["payment"] = {"kind": "owner", "address": signer, "usd": 0, "at": time.time()}
         s.pop("challenge", None)
         save(s)
+        self.paid(s, "The studio owner signed in: no charge.")
         return self.send_json(view(s))
+
+    def paid(self, s, line):
+        chat(s, "action", line, tool="pay")
+        if (s.get("agent") or {}).get("waiting") in ("payment", "customer") or any(m["who"] == "you" for m in s.get("chat") or []):
+            kick(s, "customer")
 
     def api_pay_confirm(self, s, data):
         """Accept a USDC transfer to the studio wallet, read from Base, once per transaction."""
@@ -672,6 +1450,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"error": f"Could not record the payment safely, so it is not used yet. Try again. ({e})"}, 503)
             s["payment"] = {"kind": "usdc", "address": got["from"], "usd": entry["usd"], "tx": tx, "board": s["name"]}
             save(s)
+        self.paid(s, f"Payment received: {entry['usd']:.2f} USDC.")
         return self.send_json(view(s))
 
     # --- api ---
@@ -719,17 +1498,8 @@ class Handler(BaseHTTPRequestHandler):
         return self.send_json(view(s))
 
     def api_intake(self, s, data):
-        pitch = str(data.get("pitch", "")).strip()[:3000]
-        if len(pitch) < 3:
-            return self.send_json({"error": "Tell me a little about what we are making."}, 400)
-        s["pitch"] = pitch
-        try:
-            b = intake.ask(pitch, s["refs"])
-        except RuntimeError as e:
-            return self.send_json({"error": str(e)[:300]}, 502)
-        s["brief"], s["answers"] = b, []
-        s["controls"] = {"type": b["type"], "style": b["style"], "scenes": b["scenes"], "resolution": "768P"}
-        s["phase"] = "questions" if b["questions"] else "confirm"
+        core_intake(s, data.get("pitch"))
+        s["phase"] = "questions" if s["brief"]["questions"] else "confirm"
         save(s)
         return self.send_json(view(s))
 
@@ -751,7 +1521,7 @@ class Handler(BaseHTTPRequestHandler):
     def api_back(self, s, data):
         """Step back to an earlier screen (never past a running job)."""
         to = data.get("to")
-        if s.get("job") and job_state(s["job"])[0]:
+        if rendering(s):
             return self.send_json({"error": "A render is running."}, 409)
         if to in ("pitch", "confirm", "board"):
             s["phase"] = to
@@ -759,148 +1529,39 @@ class Handler(BaseHTTPRequestHandler):
         return self.send_json(view(s))
 
     def api_storyboard(self, s, data):
-        if not s.get("brief"):
-            return self.send_json({"error": "Start with a pitch."}, 400)
-        c = data.get("controls") or s["controls"] or {}
-        controls = {"type": c.get("type") if c.get("type") in director.TYPES else "product",
-                    "style": c.get("style") if c.get("style") in director.STYLES else "",
-                    "scenes": max(director.MIN_SCENES, min(director.MAX_SCENES, int(c.get("scenes") or 3))),
-                    "resolution": c.get("resolution") if c.get("resolution") in ("768P", "1080P") else "768P"}
-        s["controls"] = controls
-        for k in ("name", "subject", "mood", "audience", "goal"):
-            if isinstance(data.get("brief", {}).get(k), str):
-                s["brief"][k] = data["brief"][k].strip()[:200]
-        b = s["brief"]
-        base = re.sub(r"[^a-z0-9-]+", "-", str(b.get("name") or b.get("subject") or "film").lower()).strip("-")[:28]
-        slug = f"{base or 'film'}-{secrets.token_hex(2)}"
-        brief = intake.director_brief(s["pitch"], b, s["answers"])
-        try:
-            director.direct(slug, brief, refs=s["refs"], ptype=controls["type"], style=controls["style"],
-                            scenes=controls["scenes"], resolution=controls["resolution"],
-                            notes=str(data.get("notes") or "")[:400] or None)
-        except SystemExit as e:
-            return self.send_json({"error": str(e)[:400]}, 502)
-        pay = s.get("payment") or {}
-        if pay.get("kind") == "usdc" and not pay.get("used") and pay.get("usd", 0) + 1e-9 >= (price_usd({"name": slug}) or 1e9):
-            pay["board"] = slug  # paid but nothing generated yet: the payment moves to the new storyboard
-        s["name"], s["phase"], s["job"], s["error"] = slug, "board", None, None
-        save(s)
-        return self.send_json(view(s))
-
-    def start(self, s, stage, only=None, refilm=None):
-        cfg = load_cfg(s["name"])
-        p = prices()
-        n = len(cfg["keyframes"])
-        clip = p["clip_usd"][cfg["video"].get("resolution", "768P")]
-        need = (p["image_usd"] * (1 if only else n) if stage == "keyframes" else clip * (1 if refilm else n - 1))
-        with LOCK:
-            if any_running():
-                return self.send_json({"error": "Another film is rendering. Try again in a minute."}, 409)
-            try:
-                topup_if_needed(need)
-            except Exception as e:  # noqa: BLE001
-                return self.send_json({"error": "The studio's generation balance is low and the agent could not "
-                                                f"top it up: {str(e)[:200]}"}, 503)
-            launch(s, stage, only, refilm)
-            if s.get("payment"):
-                s["payment"]["used"] = True
-                save(s)
+        core_storyboard(s, data.get("controls"), data.get("brief"), data.get("notes"))
         return self.send_json(view(s))
 
     def api_shoot(self, s, data):
-        if not data.get("approve") or not s.get("name"):
-            return self.send_json({"error": "Shooting needs a storyboard and explicit approval."}, 400)
-        return self.start(s, "keyframes")
+        if not data.get("approve"):
+            return self.send_json({"error": "Shooting needs explicit approval."}, 400)
+        core_shoot(s)
+        chat(s, "action", "You approved the storyboard; shooting the stills.", tool="shoot")
+        return self.send_json(view(s))
 
     def api_redo(self, s, data):
-        if not s.get("name"):
-            return self.send_json({"error": "No storyboard."}, 400)
-        cfg = load_cfg(s["name"])
-        kf = next((k for k in cfg["keyframes"] if k["id"] == data.get("id")), None)
-        if not kf:
-            return self.send_json({"error": "Unknown keyframe."}, 400)
-        if s["phase"] != "keyframes":
-            return self.send_json({"error": "Stills can be reshot before the film is made."}, 409)
-        if allowance(s["name"])["reshoots"] < 1:
-            return self.send_json({"error": "This film has used all of its reshoots."}, 409)
-        prompt = str(data.get("prompt") or "").strip()
-        if prompt:
-            kf["prompt"] = re.sub(r"\s*[\u2014\u2013]\s*", ", ", prompt)[:2000]
-            save_cfg(cfg)
-        return self.start(s, "keyframes", only=kf["id"])
+        core_redo(s, data.get("id"), data.get("prompt"))
+        chat(s, "action", f"You asked to reshoot still {str(data.get('id')).upper()}.", tool="reshoot")
+        return self.send_json(view(s))
 
     def api_refilm(self, s, data):
-        """Film one camera move again after delivery, optionally with a new direction.
-        The words and layout stay; the site and zip are rebuilt with the new move."""
-        if not s.get("name"):
-            return self.send_json({"error": "No film."}, 400)
-        if s["phase"] != "deliver":
-            return self.send_json({"error": "Moves can be refilmed once the film is made."}, 409)
-        cfg = load_cfg(s["name"])
-        move = str(data.get("id") or "").upper()
-        if move not in cfg["transitions"] and not any(f"{a['id']}-{b['id']}" == move
-                                                       for a, b in zip(cfg["keyframes"], cfg["keyframes"][1:])):
-            return self.send_json({"error": "Unknown camera move."}, 400)
-        if allowance(s["name"])["refilms"] < 1:
-            return self.send_json({"error": "This film has used all of its refilms."}, 409)
-        prompt = re.sub(r"\s*[\u2014\u2013]\s*", ", ", str(data.get("prompt") or "").strip())[:800]
-        if prompt:
-            if not prompt.lower().startswith("one continuous"):
-                prompt = "One continuous slow camera move, no cuts: " + prompt
-            cfg["transitions"][move] = prompt
-            save_cfg(cfg)
-        return self.start(s, "film", refilm=move)
+        core_refilm(s, data.get("id"), data.get("prompt"))
+        chat(s, "action", f"You asked to refilm move {str(data.get('id')).upper()}.", tool="refilm")
+        return self.send_json(view(s))
 
     def api_film(self, s, data):
-        if not data.get("approve") or not s.get("name"):
+        if not data.get("approve"):
             return self.send_json({"error": "Filming needs explicit approval."}, 400)
-        if any_running():
-            return self.send_json({"error": "Another film is rendering. Try again in a minute."}, 409)
-        cfg = load_cfg(s["name"])
-        try:  # the words are written once the pictures exist
-            copy = copywriter.write(cfg)
-            cfg.setdefault("copy_history", []).append(cfg.get("copy"))
-            cfg["copy"] = copy
-            save_cfg(cfg)
-        except RuntimeError:
-            pass  # the director's copy stays; it can be rewritten after delivery
-        resp = self.start(s, "film")
-        name = s["name"]
-
-        def typeset():  # while the camera rolls, the typographer lays out the words on the stills
-            try:
-                lay = typographer.lay_out(load_cfg(name))
-                c = load_cfg(name)
-                c["copy"]["layout"] = lay
-                save_cfg(c)
-                rebuild_site(c)
-            except Exception:  # noqa: BLE001  the default layout stays
-                pass
-        threading.Thread(target=typeset, daemon=True).start()
-        return resp
+        core_film(s)
+        chat(s, "action", "You approved the stills; filming.", tool="film")
+        return self.send_json(view(s))
 
     def api_copy(self, s, data):
-        if not s.get("name"):
-            return self.send_json({"error": "No film."}, 400)
-        cfg = load_cfg(s["name"])
-        cfg["copy"] = clean_copy(data.get("copy") or {}, cfg)
-        save_cfg(cfg)
-        rebuild_site(cfg)
-        return self.send_json({"copy": cfg["copy"], "saved": time.time()})
+        copy = core_set_copy(s, data.get("copy"))
+        return self.send_json({"copy": copy, "saved": time.time()})
 
     def api_rewrite(self, s, data):
-        if not s.get("name"):
-            return self.send_json({"error": "No film."}, 400)
-        cfg = load_cfg(s["name"])
-        try:
-            copy = copywriter.write(cfg, note=str(data.get("note") or "")[:400])
-        except RuntimeError as e:
-            return self.send_json({"error": str(e)[:300]}, 502)
-        cfg.setdefault("copy_history", []).append(cfg.get("copy"))
-        cfg["copy"] = copy
-        save_cfg(cfg)
-        rebuild_site(cfg)
-        return self.send_json({"copy": copy})
+        return self.send_json({"copy": core_rewrite(s, data.get("note"))})
 
     def api_undo(self, s, data):
         """Step back to the words and layout before the agent's last rewrite or layout."""
@@ -917,18 +1578,18 @@ class Handler(BaseHTTPRequestHandler):
         return self.send_json({"copy": cfg["copy"], "left": len(history)})
 
     def api_layout(self, s, data):
-        if not s.get("name"):
-            return self.send_json({"error": "No film."}, 400)
-        cfg = load_cfg(s["name"])
-        try:
-            lay = typographer.lay_out(cfg, note=str(data.get("note") or "")[:400])
-        except RuntimeError as e:
-            return self.send_json({"error": str(e)[:300]}, 502)
-        cfg.setdefault("copy_history", []).append(json.loads(json.dumps(cfg.get("copy"))))  # a snapshot, not a reference
-        cfg["copy"]["layout"] = lay
-        save_cfg(cfg)
-        rebuild_site(cfg)
-        return self.send_json({"copy": cfg["copy"]})
+        return self.send_json({"copy": core_layout(s, data.get("note"))})
+
+    def api_chat(self, s, data):
+        """The customer talks to the director agent; it works in the background."""
+        text = str(data.get("text") or "").strip()[:2000]
+        if not text:
+            return self.send_json({"error": "Say something."}, 400)
+        if not s.get("pitch") and s["phase"] == "pitch":
+            s["pitch"] = text[:3000]
+        chat(s, "you", text)
+        kick(s, "customer")
+        return self.send_json(view(s))
 
     def api_events(self, s):
         """Replays the current job's log as events, then follows it live until it ends."""
@@ -971,6 +1632,10 @@ def main():
     host = os.environ.get("HOST", "127.0.0.1")
     mimetypes.add_type("video/mp4", ".mp4")
     load_sessions()
+    for s in SESSIONS.values():  # a restart interrupts any agent mid-thought; renders carry on
+        if (s.get("agent") or {}).get("busy"):
+            s["agent"]["busy"], s["agent"]["waiting"] = False, "job" if s.get("job") else "customer"
+    threading.Thread(target=watcher, daemon=True).start()
     print(f"Frameline studio at http://{host}:{port} (payments to {PAY_TO}, {len(OWNER_WALLETS)} owner wallet(s))")
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 

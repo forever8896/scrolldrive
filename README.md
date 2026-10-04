@@ -1,6 +1,8 @@
 # Frameline
 
-Websites that play like a film as you scroll. Describe what you want; a team of agents plans the shots, generates them, films the camera moves between them, writes the words and lays them out. You approve before anything is paid for, then edit any word on the finished site.
+Websites that play like a film as you scroll. You talk to one agent, the director. It plans the shots, generates them, checks every still with its own eyes and reshoots weak ones, films the camera moves between them, writes the words and lays them out, all inside a budget it can see but not change. You pay once, then ask for changes in plain words or edit any word on the finished site.
+
+Other agents can hire it too: `POST /api/agent/films` answers with an x402 payment challenge (USDC on Base), and once paid the director makes the whole site on autopilot and hands back a page a person can use, a live site, the film and a zip. See `/docs#hire` and `/llms.txt`.
 
 The agent pays for its own generation from a wallet whose key it never holds: [1Claw](https://1claw.co) keeps the key in an HSM and signs only payments that fit rules a human set. LLM calls go through 1Claw Shroud, with the provider key in a 1Claw vault.
 

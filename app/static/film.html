@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Your Frameline film</title>
+<meta name="description" content="A scroll-driven film website made by the Frameline director agent: watch it, open the live site, download it, or edit the words.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  .hand { min-height: 100dvh; display: grid; grid-template-rows: auto 1fr; }
+  .hand-top { display: flex; justify-content: space-between; align-items: center; padding: 18px clamp(16px, 4vw, 40px); border-bottom: 1px solid var(--line); }
+  .hand-top .brand { display: inline-flex; align-items: center; gap: 0.5rem; font-weight: 600; }
+  .hand-top .brand i { color: var(--accent); font-size: 1.2rem; }
+  .hand-stage { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(300px, 1fr); gap: clamp(20px, 3vw, 44px);
+    padding: clamp(20px, 3vw, 44px) clamp(16px, 4vw, 40px) 64px; max-width: 1440px; width: 100%; margin: 0 auto; align-items: start; }
+  .screen { position: relative; border-radius: var(--r); overflow: hidden; background: var(--surface); border: 1px solid var(--line); aspect-ratio: 16 / 9; }
+  .screen video, .screen img.poster { width: 100%; height: 100%; object-fit: cover; }
+  .screen .wait { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px; color: var(--text-2); }
+  .screen .wait b { display: block; color: var(--text); font-size: 1.15rem; margin-bottom: 0.3rem; font-weight: 600; }
+  .stills { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; margin-top: 12px; }
+  .stills img { border-radius: var(--r-media); aspect-ratio: 16 / 9; object-fit: cover; width: 100%; opacity: 0; transition: opacity 0.8s var(--ease); }
+  .stills img.on { opacity: 1; }
+  .eyebrow { font: 500 0.74rem/1 "Geist Mono", monospace; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.05em; }
+  .side h1 { font-size: clamp(2rem, 3.4vw, 2.9rem); font-weight: 600; letter-spacing: -0.035em; line-height: 1.04; margin-top: 0.7rem; text-wrap: balance; }
+  .state { display: inline-flex; align-items: center; gap: 0.5rem; margin-top: 1rem; font-size: 0.92rem; color: var(--text-2); }
+  .state .dot { width: 9px; height: 9px; border-radius: 99px; background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+  .state.working .dot { animation: pulse 1.1s ease-in-out infinite; }
+  .state.done .dot { background: var(--ok); box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok) 18%, transparent); }
+  .state.stuck .dot { background: var(--warn); }
+  @keyframes pulse { 50% { transform: scale(0.8); box-shadow: 0 0 0 8px var(--accent-soft); } }
+  .actions { display: grid; gap: 0.6rem; margin-top: 1.6rem; }
+  .actions .btn { justify-content: center; }
+  .hint { font-size: 0.82rem; color: var(--text-3); margin-top: 0.2rem; }
+  .notes { list-style: none; padding: 0; margin: 2rem 0 0; border-top: 1px solid var(--line); }
+  .notes li { padding: 0.7rem 0; border-bottom: 1px solid var(--line); font-size: 0.88rem; color: var(--text-2); line-height: 1.5; }
+  .notes-head { margin-top: 2rem; }
+  .err { margin-top: 1rem; color: var(--warn); font-size: 0.9rem; }
+  @media (max-width: 900px) { .hand-stage { grid-template-columns: 1fr; } }
+  @media (prefers-reduced-motion: reduce) { .state.working .dot { animation: none; } .stills img { transition: none; } }
+</style>
+</head>
+<body>
+<div class="hand">
+  <header class="hand-top">
+    <a class="brand" href="/"><i class="ph ph-film-strip"></i><span>Frameline</span></a>
+    <a class="btn btn-ghost btn-sm" href="/docs#hire">For agents</a>
+  </header>
+  <main class="hand-stage">
+    <div>
+      <div class="screen" id="screen"><div class="wait" id="wait"><div><b>The director is at work</b>The film appears here when it is finished.</div></div></div>
+      <div class="stills" id="stills" aria-label="Stills"></div>
+    </div>
+    <aside class="side">
+      <p class="eyebrow">Made by an agent, for you</p>
+      <h1 id="title">Your film</h1>
+      <div class="state working" id="state"><span class="dot" aria-hidden="true"></span><span id="step">Starting</span></div>
+      <p class="err" id="err" hidden></p>
+      <div class="actions" id="actions" hidden>
+        <a class="btn btn-primary" id="open-site" target="_blank" rel="noopener">Open the live site <i class="ph ph-arrow-square-out"></i></a>
+        <a class="btn btn-ghost" id="zip">Download the site (zip) <i class="ph ph-download-simple"></i></a>
+        <a class="btn btn-ghost" id="edit">Edit the words <i class="ph ph-pen-nib"></i></a>
+        <p class="hint">Anyone with this page's link can edit the words. The live site and zip update as you do.</p>
+      </div>
+      <p class="eyebrow notes-head">How it was made</p>
+      <ol class="notes" id="notes"></ol>
+    </aside>
+  </main>
+</div>
+<script type="module">
+  const $ = (s) => document.querySelector(s);
+  const id = location.pathname.split("/").pop();
+  let shown = 0, filmShown = false;
+  async function tick() {
+    let o;
+    try { o = await (await fetch(`/api/agent/films/${id}`)).json(); } catch { return setTimeout(tick, 5000); }
+    if (o.error && !o.id) { $("#step").textContent = o.error; $("#state").className = "state stuck"; return; }
+    if (o.title) { $("#title").textContent = o.title; document.title = `${o.title} · Frameline`; }
+    $("#step").textContent = o.state === "done" ? "Ready" : o.state === "needs_attention" ? "The director stopped and needs a person" : `${o.step}…`;
+    $("#state").className = `state ${o.state === "done" ? "done" : o.state === "needs_attention" ? "stuck" : "working"}`;
+    $("#err").hidden = !o.error; $("#err").textContent = o.error || "";
+    (o.stills || []).slice(shown).forEach((u) => {
+      const img = new Image(); img.alt = ""; img.src = u; img.onload = () => img.classList.add("on"); $("#stills").append(img);
+    });
+    shown = Math.max(shown, (o.stills || []).length);
+    $("#notes").innerHTML = "";
+    [...o.notes].reverse().forEach((n) => { const li = document.createElement("li"); li.textContent = n; $("#notes").append(li); });
+    if (o.result && !filmShown) {
+      filmShown = true;
+      const v = document.createElement("video");
+      Object.assign(v, { src: matchMedia("(max-width: 900px)").matches ? o.result.film_mobile : o.result.film, poster: o.result.poster,
+        muted: true, loop: true, playsInline: true, autoplay: !matchMedia("(prefers-reduced-motion: reduce)").matches, controls: true });
+      $("#screen").replaceChildren(v);
+      $("#open-site").href = o.result.site; $("#zip").href = o.result.zip || "#"; $("#edit").href = o.result.edit;
+      $("#actions").hidden = false;
+      $("#stills").hidden = true;
+    }
+    if (o.state === "working") setTimeout(tick, 4000);
+  }
+  tick();
+</script>
+</body>
+</html>

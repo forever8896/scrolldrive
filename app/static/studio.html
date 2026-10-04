@@ -201,10 +201,25 @@
     </div>
   </section>
 
-  <!-- The agent speaks here, one line at a time -->
-  <div class="agent-line" id="agent-line" aria-live="polite">
-    <span class="agent-dot" aria-hidden="true"></span>
-    <span id="agent-text"></span>
+  <!-- The director: the latest line, and a conversation that opens above it -->
+  <section class="chat-panel" id="chat-panel" hidden aria-label="Conversation with the director">
+    <header class="chat-head">
+      <span class="chat-title"><span class="agent-dot" aria-hidden="true"></span> Director</span>
+      <label class="review-toggle" title="Off: the director films as soon as it is happy with the stills"><input type="checkbox" id="review-toggle"> Check with me before filming</label>
+      <button class="link-btn" type="button" id="chat-close" aria-label="Close the conversation"><i class="ph ph-caret-down"></i></button>
+    </header>
+    <ol class="chat-log" id="chat-log" aria-live="polite"></ol>
+  </section>
+  <div class="agent-line" id="agent-line">
+    <button class="agent-toggle" type="button" id="chat-toggle" aria-expanded="false" aria-controls="chat-panel" title="Open the conversation">
+      <span class="agent-dot" aria-hidden="true"></span>
+      <span id="agent-text" aria-live="polite"></span>
+    </button>
+    <form class="chat-form" id="chat-form" autocomplete="off">
+      <label class="sr-only" for="chat-input">Talk to the director</label>
+      <input id="chat-input" placeholder="Talk to the director" maxlength="2000">
+      <button class="btn btn-primary btn-sm chat-send" aria-label="Send"><i class="ph ph-arrow-up"></i></button>
+    </form>
   </div>
 </main>
 

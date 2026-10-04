@@ -42,3 +42,4 @@
   .home-cta-row { animation-delay: 0.24s; }
   @keyframes rise { from { opacity: 0; transform: translateY(18px); } }
 }
+.top-links { display: inline-flex; gap: 1.4rem; }
