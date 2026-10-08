@@ -19,8 +19,11 @@ import base64
 import json
 import math
 import os
+import queue
 import re
 import sys
+import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -116,29 +119,73 @@ def image_url(path):
     return scrollsite.jpeg_data_url(path)
 
 
-def ask_llm(model, content, use_router_key=False, max_tokens=5000, _retry=True):
+HEDGE_AFTER = 100   # a draft normally takes about a minute; past this, a second request races the first
+HEDGE_TRIES = 3
+HEDGE_DEADLINE = 330
+
+
+def hedged(call, hedge_after=HEDGE_AFTER, tries=HEDGE_TRIES, deadline=HEDGE_DEADLINE):
+    """The gateway sometimes hangs or answers 502. Rather than wait out a timeout and start over, a slow or failed
+    request gets a second one beside it; the first good answer wins."""
+    results, t0 = queue.Queue(), time.time()
+    started, running, errors = 0, 0, []
+
+    def run():
+        try:
+            results.put((True, call()))
+        except Exception as e:  # noqa: BLE001  any failure is a reason to try again
+            results.put((False, e))
+
+    def launch():
+        nonlocal started, running
+        started, running = started + 1, running + 1
+        threading.Thread(target=run, daemon=True).start()
+
+    launch()
+    while (left := deadline - (time.time() - t0)) > 0:
+        try:
+            ok, value = results.get(timeout=min(hedge_after, left))
+        except queue.Empty:
+            if started < tries:
+                launch()
+            continue
+        running -= 1
+        if ok:
+            return value
+        errors.append(value)
+        if started < tries:
+            launch()
+        elif not running:
+            break
+    raise errors[-1] if errors else TimeoutError(f"no answer from the model in {deadline}s")
+
+
+def ask_llm(model, content, use_router_key=False, max_tokens=5000):
     if model.startswith(SHROUD_PROVIDER_PREFIXES):
         model = "openrouter/" + model
     body = {"model": model, "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content}],
             "response_format": {"type": "json_object"}, "max_tokens": max_tokens, "temperature": 0.8}
-    req = urllib.request.Request(
-        SHROUD, data=json.dumps(body).encode(), method="POST",
-        headers={**({"Authorization": f"Bearer {router_key()}"} if use_router_key else x402pay.auth_headers()),
-                 "X-Shroud-Provider": "openrouter", "Content-Type": "application/json"})
+
+    def once():
+        req = urllib.request.Request(
+            SHROUD, data=json.dumps(body).encode(), method="POST",
+            headers={**({"Authorization": f"Bearer {router_key()}"} if use_router_key else x402pay.auth_headers()),
+                     "X-Shroud-Provider": "openrouter", "Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=HEDGE_DEADLINE) as r:
+                resp = json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            raise RuntimeError(f"Shroud refused ({e.code}): {e.read().decode(errors='replace')[:600]}")
+        text = resp["choices"][0]["message"].get("content")
+        m = re.search(r"\{.*\}", text or "", re.S)
+        if not m:  # some models occasionally return an empty or broken message
+            raise ValueError(f"the director returned no JSON: {(text or '(empty)')[:200]}")
+        return json.loads(m.group(0)), resp.get("usage", {})
+
     try:
-        with urllib.request.urlopen(req, timeout=240) as r:
-            resp = json.loads(r.read())
-    except urllib.error.HTTPError as e:
-        raise SystemExit(f"Shroud refused ({e.code}): {e.read().decode()[:600]}")
-    text = resp["choices"][0]["message"].get("content")
-    if not text:  # some models occasionally return an empty message; one retry
-        if _retry:
-            return ask_llm(model, content, use_router_key, max_tokens, _retry=False)
-        raise SystemExit("The director returned an empty reply twice; try again in a moment.")
-    m = re.search(r"\{.*\}", text, re.S)
-    if not m:
-        raise SystemExit(f"Director returned no JSON:\n{text[:800]}")
-    return json.loads(m.group(0)), resp.get("usage", {})
+        return hedged(once)
+    except Exception as e:  # noqa: BLE001
+        raise SystemExit(str(e)[:800])
 
 
 def clean(s, n):

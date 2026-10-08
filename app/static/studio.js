@@ -1037,14 +1037,26 @@ function buildThread(log, msgs, firstNew, open) {
   });
 }
 
-// The last row: the director typing, or the camera at work.
+// The slow steps, said plainly, with how long they usually take.
+const DOING = { brief: ["Reading your pitch", 40], storyboard: ["Drawing the storyboard", 90], inspect: ["Checking every still", 60],
+  rewrite: ["Rewriting the words", 40], layout: ["Laying out the words over the film", 60], set_words: ["Changing the words", 15] };
+const clockOf = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+
+// The last row: the director typing, a slow step it is in, or the camera at work.
 function renderLive() {
   const log = $("#chat-log");
   log.querySelector(".live")?.remove();
   if (!V) return;
   const running = V.job?.running;
   let row = null;
-  if (pending || V.agent?.busy) {
+  const doing = V.agent?.busy && DOING[V.agent?.doing?.tool];
+  if (doing) {
+    const t = V.agent.doing.for_s + Math.round((Date.now() - V.agent.doing.seenAt) / 1000);
+    row = li("live working");
+    row.innerHTML = "<i class=\"ph ph-circle-notch spin\"></i><span></span><em></em>";
+    row.querySelector("span").textContent = doing[0];
+    row.querySelector("em").textContent = t > doing[1] ? `${clockOf(t)} · taking longer than usual` : `${clockOf(t)} · usually ${doing[1] < 60 ? `about ${doing[1]} seconds` : doing[1] > 60 ? "a minute or two" : "about a minute"}`;
+  } else if (pending || V.agent?.busy) {
     row = li("live typing");
     row.innerHTML = "<span></span><span></span><span></span>";
     row.setAttribute("aria-label", "The director is thinking");
@@ -1084,14 +1096,14 @@ function sizeChips() {
   const n = V.board.moves.length;
   const res = V.board.resolution || V.controls?.resolution || "768P";
   const out = [];
-  if (n < 6) out.push([`Longer · ${n + 1} moves · ${usd(priceFor(n + 1, res))}`, `Make it longer: ${n + 1} camera moves.`]);
-  if (n > 2) out.push([`Shorter · ${n - 1} moves · ${usd(priceFor(n - 1, res))}`, `Make it shorter: ${n - 1} camera moves.`]);
-  out.push(res === "1080P" ? [`Standard 768p · ${usd(priceFor(n, "768P"))}`, "Make it standard quality, 768p."]
-    : [`Sharper · 1080p · ${usd(priceFor(n, "1080P"))}`, "Make it sharper: 1080p."]);
+  if (n < 6) out.push([`Longer · ${n + 1} moves · ${usd(priceFor(n + 1, res))}`, `Make it longer: ${n + 1} camera moves.`, { scenes: n + 1 }]);
+  if (n > 2) out.push([`Shorter · ${n - 1} moves · ${usd(priceFor(n - 1, res))}`, `Make it shorter: ${n - 1} camera moves.`, { scenes: n - 1 }]);
+  out.push(res === "1080P" ? [`Standard 768p · ${usd(priceFor(n, "768P"))}`, "Make it standard quality: 768p.", { resolution: "768P" }]
+    : [`Sharper · 1080p · ${usd(priceFor(n, "1080P"))}`, "Make it sharper: 1080p.", { resolution: "1080P" }]);
   return out;
 }
 
-// One-tap replies that fit where the film is: [label, what gets sent].
+// One-tap replies that fit where the film is: [label, what gets sent, an exact size change if it is one].
 function suggestions() {
   if (pending || V.agent?.busy || V.job?.running) return [];
   const same = (t) => [t, t];
@@ -1109,17 +1121,21 @@ function renderSuggest() {
   if (box.dataset.key === key) return;
   box.dataset.key = key;
   box.innerHTML = "";
-  list.forEach(([label, text]) => {
+  list.forEach(([label, text, size]) => {
     const b = document.createElement("button");
     b.type = "button";
     b.className = "chip";
     b.textContent = label;
-    b.addEventListener("click", () => send(text));
+    b.addEventListener("click", () => send(text, size));
     box.append(b);
   });
 }
 
+let liveTick = null;
 function renderChat() {
+  if (V.agent?.doing) V.agent.doing.seenAt ??= Date.now();
+  clearInterval(liveTick);
+  if (V.agent?.doing) liveTick = setInterval(renderLive, 1000);
   const msgs = V.chat || [];
   const busy = Boolean(V.agent?.busy);
   document.body.classList.toggle("dock-off", V.phase === "pitch" && !msgs.length && !busy && !pending);
@@ -1154,13 +1170,14 @@ function openDock(open) {
   if (open) toBottom();
 }
 
-async function send(text) {
+// A size from the priced options goes to the server as exactly that size; everything else to the director.
+async function send(text, size = null) {
   if (V.phase === "pitch" && !V.pitch) { $("#pitch-input").value = text; return $("#pitch-go").click(); }
   pending = text;
   renderChat();
   toBottom(true);
   try {
-    const v = await api("/api/chat", { session: V.id, text });
+    const v = await api(size ? "/api/resize" : "/api/chat", { session: V.id, text, ...size });
     pending = null;
     render(v, { quiet: true });
   } catch (err) {

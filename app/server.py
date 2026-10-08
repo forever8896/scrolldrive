@@ -64,7 +64,7 @@ PAID_STEPS = {"/api/shoot", "/api/redo", "/api/film", "/api/refilm"}
 # Optional owner pass for paid steps (header X-Studio-Code), e.g. for scripts.
 ACCESS_CODE = os.environ.get("STUDIO_ACCESS_CODE", "")
 # The AI steps are free to try but rate limited per visitor, to protect the LLM quota.
-LLM_STEPS = {"/api/intake", "/api/storyboard", "/api/rewrite", "/api/layout", "/api/chat"}
+LLM_STEPS = {"/api/intake", "/api/storyboard", "/api/rewrite", "/api/layout", "/api/chat", "/api/resize"}
 LLM_LIMIT_PER_HOUR = int(os.environ.get("LLM_LIMIT_PER_HOUR", 40))
 RATE = {}
 
@@ -335,7 +335,8 @@ def view(s):
     a = s.get("agent") or {}
     out["chat"] = [{k: m.get(k) for k in ("who", "text", "at", "tool", "ok", "detail")} for m in (s.get("chat") or [])[-80:]]
     out["agent"] = {"busy": bool(a.get("busy")), "waiting": a.get("waiting"), "mode": a.get("mode", "chat"),
-                    "inspection": a.get("inspection")}
+                    "inspection": a.get("inspection"),
+                    "doing": ({**a["doing"], "for_s": round(time.time() - a["doing"]["since"])} if a.get("doing") else None)}
     return out
 
 
@@ -768,13 +769,18 @@ def run_tool(s, tool, args):
     if tool == "storyboard":
         if not s.get("brief"):
             core_intake(s, s.get("pitch"))
-        core_storyboard(s, {k: args.get(k) for k in ("type", "style", "scenes", "resolution")}, notes=args.get("notes", ""))
+        size = args.get("scenes") or args.get("moves") or args.get("camera_moves")
+        size = int(re.search(r"\d+", str(size))[0]) if size and re.search(r"\d+", str(size)) else None
+        res = str(args.get("resolution") or "").upper().replace("1080", "1080P").replace("PP", "P").replace("768", "768P").replace("PP", "P")
+        core_storyboard(s, {"type": args.get("type"), "style": args.get("style"), "scenes": size,
+                            "resolution": res if res in ("768P", "1080P") else None}, notes=args.get("notes", ""))
         a["inspection"] = None
         a["self_reshoots"] = 0
         bv = board_view(s["name"])
         shots = "; ".join(f"{k['id']}: {copywriter.shot_gist(k['prompt'])}" for k in bv["keyframes"])
         paid = is_paid(s) or s.get("code_ok")
-        return (f"Storyboard '{bv['copy'].get('title')}' with {len(bv['keyframes'])} stills: {shots}. "
+        return (f"Storyboard '{bv['copy'].get('title')}': {len(bv['moves'])} camera moves at {bv['resolution']}, "
+                f"{len(bv['keyframes'])} stills: {shots}. "
                 + ("Already paid." if paid else f"Price ${price_usd(s):.2f}; the customer has not paid yet.")), False
     if tool == "shoot":
         core_shoot(s)
@@ -848,12 +854,22 @@ def agent_turn(s, trigger):
     a = agent_of(s)
     s["_turn_trigger"] = trigger
     try:
+        resize = a.pop("resize", None)
+        if resize:
+            a["doing"] = {"tool": "storyboard", "since": time.time()}
+            save(s)
+            try:
+                result, _ = run_tool(s, "storyboard", {**resize, "notes": "Keep the same story and look; only the size changes."})
+                chat(s, "action", TOOL_LABELS["storyboard"], tool="storyboard", detail=result[:600])
+            except Refusal as e:
+                chat(s, "action", f"Could not {TOOL_TRIES['storyboard']}", tool="storyboard", ok=False, detail=str(e)[:600])
         for _ in range(AGENT_STEPS_PER_TURN):
             if a.get("steps", 0) >= AGENT_STEPS_PER_FILM:
                 chat(s, "agent", "I have done a lot of work on this film already; tell me what to change next.")
                 a["waiting"] = "customer"
                 return
             a["steps"] = a.get("steps", 0) + 1
+            a.pop("doing", None)  # deciding again: no tool running
             try:
                 d = agent.decide(film_state(s), conversation(s), mode=a.get("mode", "chat"),
                                  self_reshoots=AGENT_SELF_RESHOOTS)
@@ -869,9 +885,17 @@ def agent_turn(s, trigger):
                 if d["tool"] == "done" and a.get("mode") == "autopilot":
                     a["finished"] = s["phase"] == "deliver"
                 return
+            a["doing"] = {"tool": d["tool"], "since": time.time()}  # shown live while a slow step runs
+            save(s)
             try:
                 result, waits = run_tool(s, d["tool"], d["args"])
-            except Refusal as e:
+            except Exception as e:  # noqa: BLE001  never end a turn in silence
+                if isinstance(e, Refusal):
+                    e2 = e
+                else:
+                    sys.stderr.write(f"agent tool {d['tool']}: {type(e).__name__}: {e}\n")
+                    e2 = Refusal(f"{type(e).__name__}: {e}"[:300], 502)
+                e = e2
                 if e.extra.get("busy"):
                     if rendering(s):
                         chat(s, "action", f"Could not {TOOL_TRIES.get(d['tool'], d['tool'])} yet: this film is still rendering.",
@@ -895,6 +919,7 @@ def agent_turn(s, trigger):
         if rendering(s):
             a["waiting"] = "job"  # whatever was said, the render's outcome still wakes the agent
         a["busy"] = False
+        a.pop("doing", None)
         s.pop("_turn_trigger", None)
         save(s)
 
@@ -1304,7 +1329,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"error": "Unknown session. Reload the page."}, 400)
             if self.has_code():
                 s["code_ok"] = True
-            handler = {"/api/chat": self.api_chat, "/api/agent/settings": self.api_agent_settings, "/api/ref/remove": self.api_ref_remove, "/api/intake": self.api_intake,
+            handler = {"/api/chat": self.api_chat, "/api/resize": self.api_resize, "/api/agent/settings": self.api_agent_settings, "/api/ref/remove": self.api_ref_remove, "/api/intake": self.api_intake,
                        "/api/answer": self.api_answer, "/api/storyboard": self.api_storyboard,
                        "/api/shoot": self.api_shoot, "/api/redo": self.api_redo, "/api/refilm": self.api_refilm, "/api/film": self.api_film,
                        "/api/copy": self.api_copy, "/api/layout": self.api_layout, "/api/undo": self.api_undo, "/api/rewrite": self.api_rewrite, "/api/back": self.api_back,
@@ -1638,6 +1663,22 @@ class Handler(BaseHTTPRequestHandler):
 
     def api_layout(self, s, data):
         return self.send_json({"copy": core_layout(s, data.get("note"))})
+
+    def api_resize(self, s, data):
+        """Longer, shorter or sharper, picked from the priced options: redrawn at exactly that size."""
+        if is_paid(s) or s["phase"] not in ("board", "confirm") or rendering(s):
+            return self.send_json({"error": "The size is set once it is paid for."}, 409)
+        size = {}
+        if data.get("scenes") is not None:
+            size["scenes"] = max(director.MIN_SCENES, min(director.MAX_SCENES, int(data["scenes"])))
+        if data.get("resolution") in ("768P", "1080P"):
+            size["resolution"] = data["resolution"]
+        if not size:
+            return self.send_json({"error": "Pick a size."}, 400)
+        customer_did(s, str(data.get("text") or "Change the size.")[:200])
+        agent_of(s)["resize"] = size
+        kick(s, "customer")
+        return self.send_json(view(s))
 
     def api_chat(self, s, data):
         """The customer talks to the director agent; it works in the background."""
