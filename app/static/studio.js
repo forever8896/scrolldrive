@@ -1,16 +1,14 @@
-// Frameline studio: one screen at a time. Pitch -> questions -> brief -> storyboard ->
-// keyframes (approve, redo) -> film (approve) -> deliver with the words editable live.
+// Frameline studio. The director runs the process from the conversation on the right; the left shows what
+// exists now (pitch, brief, storyboard, stills, the finished site) and keeps direct edits. The two decisions
+// a person makes, the price and the stills, sit in the conversation right under the director's question.
 // The server keeps the session on disk; reloading the page picks up exactly where it was.
 import { $, api, usd, enter, reduceMotion, store, EASE } from "/static/common.js";
 
 const STEPS = ["brief", "board", "keyframes", "film", "deliver"];
 const PHASE_STEP = { pitch: "brief", questions: "brief", confirm: "brief", board: "board",
   shooting: "keyframes", keyframes: "keyframes", filming: "film", deliver: "deliver" };
-const PHASE_SCENE = { pitch: "pitch", questions: "questions", confirm: "confirm", board: "board",
+const PHASE_SCENE = { pitch: "pitch", questions: "brief", confirm: "brief", board: "board",
   shooting: "board", keyframes: "board", filming: "board", deliver: "deliver" };
-const TYPES = [["product", "Product"], ["portfolio", "Portfolio"], ["brand", "Brand"], ["event", "Event"], ["experimental", "Strange"]];
-const STYLES = [["", "Director's choice"], ["photoreal", "Photoreal"], ["editorial", "Editorial"], ["surreal", "Surreal"],
-  ["graphic", "Graphic"], ["noir", "Noir"], ["dreamy", "Dreamy"]];
 const EXAMPLE = { text: "Ember, a handmade ceramic pour-over dripper from a two-person studio in Porto. Warm, slow, early-morning light, the calm before the day. For people who weigh their coffee beans. The site should make them want to hold it.", photo: "/runs/nightfall/product-photo.jpg" };
 const SID_KEY = "frameline-session";
 
@@ -52,21 +50,23 @@ function bignum(text) {
   enter(el, { opacity: 0, transform: "translateY(40px)" }, { duration: 1200 });
 }
 
-/* ---------------- the agent's voice ---------------- */
-let sayTimer = null;
+/* ---------------- the studio's own notes ---------------- */
+// Wallet steps and errors. Inside the decision card while one is open, otherwise a short toast.
+let toastTimer = null;
 function say(text, tone = "") {
-  const line = $("#agent-line");
-  const out = $("#agent-text");
-  line.classList.toggle("warn", tone === "warn");
-  clearInterval(sayTimer);
-  if (reduceMotion) { out.textContent = text; return; }
-  out.textContent = "";
-  let i = 0;
-  sayTimer = setInterval(() => {
-    i += 2;
-    out.textContent = text.slice(0, i);
-    if (i >= text.length) clearInterval(sayTimer);
-  }, 14);
+  if (!$("#decide").hidden) {
+    const note = $("#decide-note");
+    note.textContent = text;
+    note.classList.toggle("warn", tone === "warn");
+    return;
+  }
+  const t = $("#toast");
+  t.textContent = text;
+  t.classList.toggle("warn", tone === "warn");
+  t.hidden = false;
+  enter(t, { opacity: 0, transform: "translate(-50%, 10px)" }, { duration: 400 });
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.hidden = true; }, tone === "warn" ? 7000 : 4000);
 }
 
 /* ---------------- stepper and scenes ---------------- */
@@ -104,8 +104,7 @@ function render(v, { quiet = false } = {}) {
   showScene(scene);
   if (scene === "pitch") renderPitch(changed);
   else if (readTimer) stopReading();
-  if (scene === "questions") renderQuestions();
-  if (scene === "confirm") renderConfirm(changed);
+  if (scene === "brief") renderBrief(changed);
   if (scene === "board") renderBoard(changed);
   if (scene === "deliver") renderDeliver(changed);
   if (v.error && !quiet) say(`That stopped: ${v.error}`, "warn");
@@ -128,7 +127,6 @@ function renderPitch(changed) {
   if (changed) {
     kinetic($("#pitch-title"), "What are we making?");
     stagger(document.querySelectorAll("#starters .chip"), undefined, 500, 45);
-    say("Tell me what you want to make. Add images if your subject should look exactly right.");
     setTimeout(() => $("#pitch-input").focus({ preventScroll: true }), 300);
   }
 }
@@ -190,10 +188,9 @@ $("#pitch-go").addEventListener("click", async () => {
   await leave($(".pitch"));
   $(".pitch").hidden = true;
   showReading(pitch);
-  say(V.refs.length ? `Reading your pitch and studying ${V.refs.length === 1 ? "your image" : `your ${V.refs.length} images`}.` : "Reading your pitch.");
   try {
     render(await api("/api/chat", { session: V.id, text: pitch }), { quiet: true });
-    openChat(true);
+    openDock(true);
   } catch (e) {
     stopReading();
     $(".pitch").hidden = false;
@@ -220,129 +217,7 @@ function showReading(text) {
 }
 function stopReading() { clearInterval(readTimer); $("#reading").hidden = true; }
 
-/* ---------------- 2. questions ---------------- */
-let qIndex = 0;
-let answers = [];
-
-function renderTray() {
-  const tray = $("#tray");
-  tray.innerHTML = "";
-  (V.brief.understood || []).forEach((t) => {
-    const c = document.createElement("span");
-    c.className = "tray-chip";
-    c.innerHTML = `<i class="ph ph-check"></i><span></span>`;
-    c.querySelector("span").textContent = t;
-    tray.append(c);
-  });
-  answers.forEach((a) => addTrayChip(a.answer, false));
-  stagger(tray.children, { opacity: 0, transform: "translateY(-8px) scale(0.96)" }, 100, 60);
-}
-
-function addTrayChip(text, animate = true) {
-  const c = document.createElement("span");
-  c.className = "tray-chip answer";
-  c.innerHTML = `<i class="ph ph-arrow-bend-down-right"></i><span></span>`;
-  c.querySelector("span").textContent = text;
-  $("#tray").append(c);
-  if (animate) enter(c, { opacity: 0, transform: "scale(0.7)" }, { duration: 600 });
-  return c;
-}
-
-function renderQuestions() {
-  qIndex = 0;
-  answers = [];
-  renderTray();
-  showQuestion();
-}
-
-function showQuestion() {
-  const qs = V.brief.questions;
-  const q = qs[qIndex];
-  const wrap = $("#q-wrap");
-  wrap.innerHTML = "";
-  bignum(String(qIndex + 1).padStart(2, "0"));
-  const card = document.createElement("div");
-  card.className = "q";
-  card.innerHTML = `
-    <p class="eyebrow">Question ${qIndex + 1} of ${qs.length}</p>
-    <h2 class="kinetic q-title"></h2>
-    <div class="q-options"></div>
-    <form class="q-own"><input placeholder="Or say it in your own words" aria-label="Your answer"><button class="send" aria-label="Answer"><i class="ph ph-arrow-right"></i></button></form>
-    <button class="link-btn q-skip">Skip, you decide</button>`;
-  wrap.append(card);
-  kinetic(card.querySelector(".q-title"), q.question);
-  const opts = card.querySelector(".q-options");
-  if (q.kind === "images") {
-    const drop = document.createElement("label");
-    drop.className = "q-drop";
-    drop.innerHTML = `<input type="file" accept="image/*" multiple hidden><i class="ph ph-images"></i><strong>Drop images or click to choose</strong><span>Up to 6</span>`;
-    drop.querySelector("input").addEventListener("change", async (e) => {
-      await uploadFiles(e.target.files);
-      answer(`${V.refs.length} image${V.refs.length === 1 ? "" : "s"} added`, drop);
-    });
-    ["dragenter", "dragover"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add("dragging"); }));
-    drop.addEventListener("dragleave", () => drop.classList.remove("dragging"));
-    drop.addEventListener("drop", async (e) => {
-      e.preventDefault();
-      await uploadFiles(e.dataTransfer.files);
-      answer(`${V.refs.length} image${V.refs.length === 1 ? "" : "s"} added`, drop);
-    });
-    opts.append(drop);
-  }
-  q.options.forEach((o) => {
-    const b = document.createElement("button");
-    b.className = "option";
-    b.textContent = o;
-    b.addEventListener("click", () => answer(o, b));
-    opts.append(b);
-  });
-  stagger(opts.children, { opacity: 0, transform: "translateY(18px) scale(0.97)" }, 380, 70);
-  enter(card.querySelector(".q-own"), { opacity: 0 }, { delay: 700 });
-  enter(card.querySelector(".q-skip"), { opacity: 0 }, { delay: 800 });
-  card.querySelector(".q-own").addEventListener("submit", (e) => {
-    e.preventDefault();
-    const val = e.target.querySelector("input").value.trim();
-    if (val) answer(val, e.target.querySelector("input"));
-  });
-  card.querySelector(".q-skip").addEventListener("click", () => answer("", null));
-}
-
-// The chosen answer flies up into the brief tray, then the next question rises.
-async function answer(text, fromEl) {
-  const q = V.brief.questions[qIndex];
-  answers.push({ id: q.id, answer: text, question: q.question });
-  if (text) {
-    fromEl?.classList.add("picked");
-    const chip = addTrayChip(text, false);
-    if (fromEl && !reduceMotion) {
-      const a = fromEl.getBoundingClientRect();
-      const b = chip.getBoundingClientRect();
-      chip.style.visibility = "hidden";
-      const ghost = chip.cloneNode(true);
-      ghost.classList.add("flying");
-      ghost.style.visibility = "visible";
-      Object.assign(ghost.style, { left: `${a.left}px`, top: `${a.top}px`, width: `${b.width}px` });
-      document.body.append(ghost);
-      await ghost.animate([
-        { transform: "translate(0,0) scale(1.1)", opacity: 0.9 },
-        { transform: `translate(${b.left - a.left}px, ${b.top - a.top}px) scale(1)`, opacity: 1 }],
-      { duration: 650, easing: EASE }).finished;
-      ghost.remove();
-      chip.style.visibility = "";
-    }
-  }
-  await leave($("#q-wrap .q"));
-  qIndex += 1;
-  if (qIndex < V.brief.questions.length) return showQuestion();
-  $("#q-wrap").innerHTML = "";
-  try {
-    const v = await api("/api/answer", { session: V.id, answers });
-    render(v);
-    say("That is everything. Check the brief, set the length and quality, and I will direct it.");
-  } catch (e) { say(`Could not save that: ${e.message}`, "warn"); }
-}
-
-/* ---------------- 3. confirm ---------------- */
+/* ---------------- 2. the brief: what the director understood ---------------- */
 function segmented(el, items, value, onPick) {
   el.innerHTML = "";
   items.forEach(([val, label]) => {
@@ -364,83 +239,43 @@ function priceFor(scenes, res) {
   return prices?.prices?.[res]?.[scenes] ?? null;
 }
 
-function updatePrice() {
-  const c = V.controls;
-  $("#len-val").textContent = `${c.scenes} moves, about ${c.scenes * 5} seconds`;
-  const price = priceFor(c.scenes, c.resolution);
-  if (price != null) $("#p-price").textContent = usd(price);
-}
-
 const FIELD_LABELS = [["name", "Name"], ["subject", "Subject"], ["mood", "Mood"], ["audience", "For"], ["goal", "Visitors should"]];
-function renderConfirm(changed) {
-  const b = V.brief;
-  $("#directing").hidden = true;
-  $(".confirm").hidden = false;
-  $(".confirm").getAnimations().forEach((a) => a.cancel());
+function renderBrief(changed) {
+  const b = V.brief || {};
   bignum("");
-  if (changed) kinetic($("#c-headline"), b.headline || "Your film");
+  const head = $("#c-headline");
+  if (changed || head.dataset.text !== (b.headline || "")) {
+    head.dataset.text = b.headline || "";
+    kinetic(head, b.headline || b.name || "Your film");
+  }
   const rows = $("#brief-rows");
-  rows.innerHTML = "";
-  FIELD_LABELS.forEach(([k, label]) => {
-    const d = document.createElement("div");
-    d.className = "brief-row";
-    d.innerHTML = `<dt></dt><dd contenteditable="plaintext-only" spellcheck="false"></dd>`;
-    d.querySelector("dt").textContent = label;
-    const dd = d.querySelector("dd");
-    dd.textContent = b[k] || "";
-    dd.dataset.key = k;
-    dd.dataset.placeholder = k === "name" ? "No name yet" : "Your call";
-    dd.addEventListener("input", () => { V.brief[k] = dd.textContent.trim(); });
-    dd.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); dd.blur(); } });
-    rows.append(d);
-  });
-  (V.answers || []).filter((a) => a.answer && !FIELD_LABELS.some(([k]) => k === a.field)).forEach((a) => {
-    const d = document.createElement("div");
-    d.className = "brief-row";
-    d.innerHTML = "<dt>Also</dt><dd></dd>";
-    d.querySelector("dd").textContent = a.answer;
-    rows.append(d);
-  });
-  const refs = $("#c-refs");
-  refs.innerHTML = "";
-  V.refs.forEach((u) => { const i = new Image(); i.src = u; i.alt = ""; refs.append(i); });
-  if (changed) stagger([...rows.children, ...refs.children], { opacity: 0, transform: "translateX(-12px)" }, 350, 60);
-
-  const c = V.controls;
-  segmented($("#ctl-type"), TYPES, c.type, (v) => { c.type = v; });
-  segmented($("#ctl-style"), STYLES, c.style, (v) => { c.style = v; });
-  segmented($("#ctl-res"), [["768P", "Standard 768p"], ["1080P", "High 1080p"]], c.resolution, (v) => { c.resolution = v; updatePrice(); });
-  $("#ctl-scenes").value = c.scenes;
-  updatePrice();
-  if (changed) stagger(document.querySelectorAll(".controls > *"), { opacity: 0, transform: "translateY(12px)" }, 450, 50);
-}
-$("#ctl-scenes").addEventListener("input", (e) => { V.controls.scenes = Number(e.target.value); updatePrice(); });
-$("#repitch-btn").addEventListener("click", async () => render(await api("/api/back", { session: V.id, to: "pitch" })));
-
-$("#direct-btn").addEventListener("click", async () => {
-  const btn = $("#direct-btn");
-  btn.disabled = true;
-  await leave($(".confirm"));
-  $(".confirm").hidden = true;
-  $("#directing").hidden = false;
-  const n = V.controls.scenes + 1;
-  kinetic($("#directing-title"), `Writing ${n} shots and ${n - 1} camera moves`);
+  const sig = JSON.stringify([b, V.answers, V.refs]);
+  if (changed || rows.dataset.sig !== sig) {
+    rows.dataset.sig = sig;
+    rows.innerHTML = "";
+    FIELD_LABELS.filter(([k]) => b[k]).forEach(([k, label]) => {
+      const d = document.createElement("div");
+      d.className = "brief-row";
+      d.innerHTML = "<dt></dt><dd></dd>";
+      d.querySelector("dt").textContent = label;
+      d.querySelector("dd").textContent = b[k];
+      rows.append(d);
+    });
+    const refs = $("#c-refs");
+    refs.innerHTML = "";
+    V.refs.forEach((u) => { const i = new Image(); i.src = u; i.alt = ""; refs.append(i); });
+    if (changed) stagger([...rows.children, ...refs.children], { opacity: 0, transform: "translateX(-12px)" }, 350, 60);
+  }
+  // While the director drafts the storyboard, its shots take shape as placeholders.
+  const writing = Boolean(V.agent?.busy);
   const gs = $("#ghost-strip");
-  gs.innerHTML = "";
-  for (let i = 0; i < n; i += 1) { const s = document.createElement("span"); s.style.setProperty("--i", i); gs.append(s); }
-  stagger(gs.children, { opacity: 0, transform: "translateX(40px)" }, 300, 90);
-  say(V.refs.length ? "The director is studying your images and writing every shot." : "The director is writing every shot.");
-  try {
-    const v = await api("/api/storyboard", { session: V.id, controls: V.controls, brief: V.brief });
-    render(v);
-    say(`Storyboard ready: ${v.board.keyframes.length} stills, ${v.board.moves.length} camera moves. Nothing is shot until you say so.`);
-  } catch (e) {
-    $("#directing").hidden = true;
-    $(".confirm").hidden = false;
-    $(".confirm").getAnimations().forEach((a) => a.cancel());
-    say(`The director stumbled: ${e.message}. Try again.`, "warn");
-  } finally { btn.disabled = false; }
-});
+  $("#directing").hidden = !writing;
+  if (writing && !gs.children.length) {
+    const n = (V.controls?.scenes || 3) + 1;
+    for (let i = 0; i < n; i += 1) { const sp = document.createElement("span"); sp.style.setProperty("--i", i); gs.append(sp); }
+    stagger(gs.children, { opacity: 0, transform: "translateX(40px)" }, 300, 90);
+  } else if (!writing) gs.innerHTML = "";
+}
 
 /* ---------------- 4. board: storyboard, keyframes, film ---------------- */
 function tile(kind, item) {
@@ -448,7 +283,7 @@ function tile(kind, item) {
   div.className = `frame ${kind}`;
   div.dataset.id = item.id;
   div.innerHTML = `<div class="media"></div><div class="label"></div><div class="prompt"></div>${kind === "move" ? '<div class="join"></div>' : ""}`;
-  div.querySelector(".label").textContent = kind === "move" ? `Move ${item.from} to ${item.to}` : `Keyframe ${item.id}`;
+  div.querySelector(".label").textContent = kind === "move" ? `Camera move ${item.from} → ${item.to}` : `Still ${item.id}`;
   div.querySelector(".prompt").textContent = kind === "move"
     ? item.prompt.replace(/^One continuous slow camera move, no cuts:\s*/i, "")
     : item.prompt.replace(/^Keep the subject from reference[^.]*\.\s*/i, "");
@@ -460,7 +295,7 @@ function setMedia(frame, state, url) {
   media.className = `media ${state}`;
   if (state === "planned") {
     const still = frame.classList.contains("still");
-    media.innerHTML = `<i class="ph ${still ? "ph-aperture" : "ph-film-slate"}"></i><span>${still ? "Shot after approval" : "Filmed after approval"}</span>`;
+    media.innerHTML = `<i class="ph ${still ? "ph-aperture" : "ph-film-slate"}"></i><span>${still ? "Shot once paid" : "Filmed after you see the stills"}</span>`;
   } else if (state === "pending") {
     media.innerHTML = "";
   } else if (state === "working") {
@@ -469,7 +304,7 @@ function setMedia(frame, state, url) {
     if (media.querySelector("img")?.src.endsWith(url)) return;
     media.innerHTML = "";
     const img = new Image();
-    img.alt = `Keyframe ${frame.dataset.id}`;
+    img.alt = `Still ${frame.dataset.id}`;
     img.onload = () => requestAnimationFrame(() => img.classList.add("shown"));
     img.src = url;
     media.append(img);
@@ -487,7 +322,7 @@ function renderBoard(changed) {
   const phase = V.phase;
   $("#board-title").textContent = b.copy.title || "Storyboard";
   $("#board-tagline").textContent = b.copy.tagline || "";
-  $("#board-eyebrow").textContent = { board: "Storyboard", shooting: "Shooting keyframes", keyframes: "Keyframes", filming: "Filming" }[phase];
+  $("#board-eyebrow").textContent = { board: "Storyboard", shooting: "Shooting the stills", keyframes: "Your stills", filming: "Filming" }[phase];
   bignum("");
   const strip = $("#strip");
   if (changed || strip.dataset.name !== b.name || strip.children.length !== b.keyframes.length + b.moves.length) {
@@ -497,7 +332,7 @@ function renderBoard(changed) {
       strip.append(tile("still", k));
       if (b.moves[i]) strip.append(tile("move", b.moves[i]));
     });
-    strip.style.gridTemplateColumns = [...strip.children].map((el) => (el.classList.contains("move") ? "minmax(170px, 1fr)" : "minmax(260px, 1.5fr)")).join(" ");
+    strip.style.gridTemplateColumns = [...strip.children].map((el) => (el.classList.contains("move") ? "minmax(190px, 1fr)" : "minmax(320px, 1.7fr)")).join(" ");
     stagger(strip.children, { opacity: 0, transform: "translateY(18px)" }, 200, 60);
   }
   b.keyframes.forEach((k) => {
@@ -512,7 +347,7 @@ function renderBoard(changed) {
     if (m.url) setMedia(f, "video", m.url);
     else if (!f.querySelector(".media.working")) setMedia(f, "planned");
   });
-  renderGate();
+  setProgress(progressNow());
 }
 
 function redoControls(frame, k) {
@@ -552,69 +387,13 @@ function openRedo(frame, k) {
     try {
       const v = await api("/api/redo", { session: V.id, id: k.id, prompt: p.querySelector("textarea").value });
       p.remove();
-      ledger(`Reshooting keyframe ${k.id}`);
-      say(`Reshooting keyframe ${k.id}. The camera moves around it will be filmed from the new still.`);
+      ledger(`Reshooting still ${k.id}`);
       render(v);
     } catch (err) { say(`Could not reshoot: ${err.message}`, "warn"); }
   });
   frame.append(p);
   enter(p, { opacity: 0, transform: "translateY(-6px)" });
   p.querySelector("textarea").focus();
-}
-
-function renderGate() {
-  const b = V.board;
-  const phase = V.phase;
-  const gate = $("#gate");
-  const go = $("#gate-go");
-  const back = $("#gate-back");
-  const running = V.job?.running;
-  gate.hidden = false;
-  go.hidden = false;
-  back.hidden = false;
-  go.disabled = false;
-  $("#paybox").hidden = true;
-  if (phase === "board" && !V.pay?.paid) {
-    const price = usd(V.pay.amount_usd);
-    $("#gate-title").textContent = `${price} for the whole site`;
-    $("#gate-body").textContent = "One payment covers everything: the stills, the film, the words and your site. After the stills you approve them before the film is made, at no extra cost. Paid in USDC on Base, straight to the studio's own wallet.";
-    go.innerHTML = !wallet.address ? `Connect wallet <i class="ph ph-wallet"></i>`
-      : wallet.owner ? `Shoot free, you own the studio <i class="ph ph-aperture"></i>`
-        : `Pay ${price} and shoot <i class="ph ph-arrow-right"></i>`;
-    back.innerHTML = `<i class="ph ph-arrow-left"></i> Back to the brief`;
-    $("#paybox").hidden = false;
-    $("#pay-wallet").innerHTML = wallet.address ? `<i class="ph ph-wallet"></i> ${short(wallet.address)}${wallet.owner ? " · owner" : ""}` : "";
-    $("#pm-amount").textContent = V.pay.amount_usd.toFixed(2);
-    $("#pm-to").textContent = V.pay.to;
-    $("#board-status").textContent = "Awaiting payment";
-    $("#board-status").className = "board-status";
-  } else if (phase === "board") {
-    const p = V.payment;
-    $("#gate-title").textContent = `Shoot the ${b.keyframes.length} keyframes`;
-    $("#gate-body").textContent = `${p?.kind === "owner" ? "Owner wallet: no charge." : p ? `Paid ${usd(p.usd)} from ${short(p.address)}.` : ""} Stills first; you review every one before any film is made.`;
-    go.innerHTML = `Shoot keyframes <i class="ph ph-aperture"></i>`;
-    back.innerHTML = `<i class="ph ph-arrow-left"></i> Back to the brief`;
-    $("#board-status").textContent = "Awaiting approval";
-    $("#board-status").className = "board-status";
-  } else if (phase === "keyframes") {
-    const missing = b.keyframes.some((k) => !k.url);
-    $("#gate-title").textContent = missing ? "Some stills are missing" : "Happy with the stills? Approve them to film";
-    $("#gate-body").textContent = missing
-      ? "Reshoot the missing ones, or go back to the storyboard."
-      : `Already paid: nothing more to pay. Redo any shot you do not love (${V.allowance?.reshoots ?? 0} reshoot${V.allowance?.reshoots === 1 ? "" : "s"} left), then approve and the camera moves are filmed between them while the words are written.`;
-    go.innerHTML = `Approve and film <i class="ph ph-film-reel"></i>`;
-    go.disabled = missing;
-    back.innerHTML = `<i class="ph ph-arrow-left"></i> Back to the storyboard`;
-    back.hidden = true;
-    $("#board-status").textContent = "Your review";
-    $("#board-status").className = "board-status";
-  } else {
-    gate.hidden = true;
-    $("#board-status").textContent = phase === "shooting" ? "Shooting" : "Filming";
-    $("#board-status").className = "board-status live";
-  }
-  if (running) gate.hidden = true;
-  setProgress(progressNow());
 }
 
 function progressNow() {
@@ -684,7 +463,7 @@ async function payUsdc() {
   const data = `0xa9059cbb${p.to.slice(2).toLowerCase().padStart(64, "0")}${BigInt(p.amount_units).toString(16).padStart(64, "0")}`;
   say(`Approve ${usd(p.amount_usd)} USDC in your wallet.`);
   const tx = await eth.request({ method: "eth_sendTransaction", params: [{ from: wallet.address, to: p.token, data }] });
-  ledger(`You paid ${usd(p.amount_usd)} USDC`, short(tx));
+  ledger(`You paid ${usd(p.amount_usd)} USDC`);
   await confirmPayment(tx);
 }
 
@@ -693,49 +472,95 @@ $("#pm-copy").addEventListener("click", () => { navigator.clipboard?.writeText(V
 $("#pay-manual").addEventListener("submit", async (e) => {
   e.preventDefault();
   const tx = $("#pm-tx").value.trim();
-  try { await confirmPayment(tx); if (V.pay?.paid) say("Payment received. Shoot when you are ready."); }
+  try { await confirmPayment(tx); }
   catch (err) { say(`Could not accept that payment: ${err.message}`, "warn"); }
 });
 
-$("#gate-go").addEventListener("click", async () => {
-  const go = $("#gate-go");
+/* ---------------- the decision in front of you, pinned above the composer ---------------- */
+function decision() {
+  // Only while the director is listening: never offer a price or a go-ahead for something it is redrawing.
+  if (!V.board || V.agent?.mode === "autopilot" || V.agent?.busy || pending) return null;
+  if (V.phase === "board" && !V.pay?.paid) return "pay";
+  if (V.phase === "keyframes" && !V.job?.running) return "film";
+  return null;
+}
+
+function renderDecision() {
+  const which = decision();
+  const card = $("#decide");
+  const was = card.dataset.which || "";
+  card.dataset.which = which || "";
+  card.hidden = !which;
+  $("#decide-pay").hidden = which !== "pay";
+  $("#decide-film").hidden = which !== "film";
+  if (which !== was) {
+    $("#decide-note").textContent = "";
+    if (which) enter(card, { opacity: 0, transform: "translateY(10px)" }, { duration: 500 });
+  }
+  if (which === "pay") {
+    const n = V.board.moves.length;
+    const res = V.board.resolution || V.controls?.resolution;
+    $("#pay-what").textContent = `${V.board.copy.title || "Your site"} · ${n} camera moves · ${res === "1080P" ? "1080p" : "768p"}`;
+    $("#pay-price").textContent = usd(V.pay.amount_usd);
+    $("#pay-go").innerHTML = !wallet.address ? `<i class="ph ph-wallet"></i> Connect a wallet to pay`
+      : wallet.owner ? `<i class="ph ph-aperture"></i> Shoot free: you own the studio`
+        : `Pay ${usd(V.pay.amount_usd)} and shoot <i class="ph ph-arrow-right"></i>`;
+    $("#pay-wallet").textContent = wallet.address ? `${short(wallet.address)}${wallet.owner ? " · owner" : ""}` : "";
+    $("#pm-amount").textContent = V.pay.amount_usd.toFixed(2);
+    $("#pm-to").textContent = V.pay.to;
+  }
+  if (which === "film") {
+    const missing = V.board.keyframes.filter((k) => !k.url).length;
+    const left = V.allowance?.reshoots ?? 0;
+    $("#film-body").textContent = missing
+      ? `${missing === 1 ? "One still" : `${missing} stills`} did not come out. Ask me to reshoot, or redo it yourself.`
+      : `Redo any still you do not love (${left} reshoot${left === 1 ? "" : "s"} left), tell me what to change, or film it now. It is already paid for.`;
+    const go = $("#film-go");
+    if (!go.dataset.busy) go.innerHTML = `Film it <i class="ph ph-film-reel"></i>`;
+    go.disabled = Boolean(missing);
+  }
+}
+
+$("#pay-go").addEventListener("click", async () => {
+  const go = $("#pay-go");
   go.disabled = true;
   try {
-    if (V.phase === "board" && !V.pay?.paid) {
-      if (!wallet.address) { await connectWallet(); renderGate(); return; }
-      if (wallet.owner) await ownerSignIn();
-      else await payUsdc();
-      if (!V.pay?.paid) { renderGate(); return; }
-    }
-    if (V.phase === "board") {
-      const v = await api("/api/shoot", { session: V.id, approve: true });
-      ledger("Keyframes approved by you");
-      say("Paid. Shooting the stills now; you review them before anything is filmed.");
-      render(v);
-    } else if (V.phase === "keyframes") {
-      go.innerHTML = `Writing the words <i class="ph ph-pen-nib"></i>`;
-      say("The copywriter is writing the words from your stills. The camera rolls right after.");
-      const v = await api("/api/film", { session: V.id, approve: true });
-      ledger("Film approved by you");
-      say("Filming the camera moves. Each one starts on one still and lands exactly on the next.");
-      render(v);
-    }
+    if (!wallet.address) await connectWallet();
+    else if (wallet.owner) await ownerSignIn();
+    else await payUsdc();
   } catch (e) {
+    say(e.code === 4001 ? "You cancelled that in your wallet." : `Could not pay: ${e.message}`, "warn");
+  } finally {
     go.disabled = false;
-    renderGate();
-    say(`Could not start: ${e.message}`, "warn");
+    if (V) renderDecision();
   }
 });
-$("#gate-back").addEventListener("click", async () => render(await api("/api/back", { session: V.id, to: "confirm" })));
 
-function ledger(text, amount = "") {
-  $("#ledger").hidden = false;
-  const li = document.createElement("li");
-  li.innerHTML = "<span></span><span class=\"amt\"></span>";
-  li.children[0].textContent = text;
-  li.children[1].textContent = amount;
-  $("#ledger-list").prepend(li);
-}
+// Writing the words takes a moment before the camera rolls: the decision shows in the thread at once.
+$("#film-go").addEventListener("click", async () => {
+  const go = $("#film-go");
+  go.disabled = true;
+  go.dataset.busy = "1";
+  go.innerHTML = `<i class="ph ph-circle-notch spin"></i> Writing the words`;
+  pending = "The stills are good. Film it.";
+  renderChat();
+  try {
+    const v = await api("/api/film", { session: V.id, approve: true });
+    pending = null;
+    render(v);
+  } catch (e) {
+    pending = null;
+    renderChat();
+    say(`Could not start filming: ${e.message}`, "warn");
+  } finally {
+    delete go.dataset.busy;
+    if (V) renderDecision();
+  }
+});
+
+// What the camera is doing right now, shown live at the end of the conversation.
+let liveText = "";
+function ledger(text) { liveText = text; renderLive(); }
 
 // Live render events. The server replays the job log first, so this is safe to re-run on reload.
 function follow() {
@@ -778,8 +603,8 @@ function follow() {
       case "finished": {
         events.close(); events = null;
         const v = ev.view;
-        if (v.phase === "keyframes" && !v.error) say("The stills are in. Redo any you do not love, then approve them to film. It is already paid for.");
-        if (v.phase === "deliver") { setProgress(1); say("Done. Click any words in the preview to change them, or ask for a rewrite."); }
+        if (v.phase === "deliver") setProgress(1);
+        liveText = "";
         render(v);
         break;
       }
@@ -862,8 +687,7 @@ $("#refilm-panel").addEventListener("submit", async (e) => {
       await ownerSignIn();
       v = await api("/api/refilm", body);
     }
-    ledger(`Refilming move ${m.from} to ${m.to}`);
-    say(`Refilming the move from ${m.from} to ${m.to}. Your words and layout stay as they are.`);
+    ledger(`Refilming the move ${m.from} to ${m.to}`);
     copy = null;
     render(v);
   } catch (err) { say(`Could not refilm: ${err.message}`, "warn"); }
@@ -1114,48 +938,6 @@ function scheduleSave() {
   }, 900);
 }
 
-$("#rewrite").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const act = e.submitter?.dataset.act || "words";
-  const typed = $("#rewrite-input").value.trim();
-  const note = typed || (act === "words" ? "Make it sharper and more specific." : "");
-  const btns = [...document.querySelectorAll("#rewrite button")];
-  const btn = e.submitter || btns[0];
-  const label = btn.innerHTML;
-  btns.forEach((b) => { b.disabled = true; });
-  btn.innerHTML = `<i class="ph ph-circle-notch spin"></i> ${act === "words" ? "Writing" : "Looking at the frames"}`;
-  $("#word-fields").classList.add("busy");
-  say(act === "words" ? `The copywriter is on it: ${note}` : `The typographer is studying every frame${note ? `: ${note}` : "."}`);
-  try {
-    const r = await api(act === "words" ? "/api/rewrite" : "/api/layout", { session: V.id, note });
-    copy = structuredClone(r.copy);
-    if (!copy.beats) copy.beats = (copy.acts || []).map((a) => a.text);
-    V.board.copy = r.copy;
-    buildWordFields();
-    voice();
-    applyLayout();
-    const doc = frameDoc();
-    if (act === "words") {
-      const keys = ["title", "tagline", "cta.label", ...copy.beats.map((_, i) => `beats.${i}`),
-        ...(copy.sections || []).flatMap((_, i) => [`sections.${i}.heading`, `sections.${i}.body`])];
-      keys.forEach((k) => doc?.querySelectorAll(`[data-edit="${k}"]`).forEach((el) => {
-        el.textContent = getCopy(k) ?? "";
-        enter(el, { opacity: 0, filter: "blur(6px)" }, { duration: 700 });
-      }));
-    } else focusInFrame("beats.0");
-    $("#rewrite-input").value = "";
-    $("#save-state").textContent = act === "words" ? "Rewritten and saved" : "Laid out and saved";
-    $("#save-state").className = "save-state ok";
-    say(act === "words" ? "New words are in. Keep editing by hand, or ask again."
-      : `New layout: ${(copy.layout?.note || "done").replace(/[.\s]+$/, "")}. Adjust any line below, or undo.`);
-  } catch (err) { say(`That failed: ${err.message}`, "warn"); }
-  finally {
-    btns.forEach((b) => { b.disabled = false; });
-    btn.innerHTML = label;
-    $("#word-fields").classList.remove("busy");
-  }
-});
-
 $("#undo-btn").addEventListener("click", async () => {
   try {
     const r = await api("/api/undo", { session: V.id });
@@ -1172,55 +954,222 @@ $("#undo-btn").addEventListener("click", async () => {
   } catch (e) { say(`Could not undo: ${e.message}`, "warn"); }
 });
 
-/* ---------------- the director: conversation and live state ---------------- */
-let chatShown = 0;
-let lastSaid = null;
+/* ---------------- the director: a conversation docked beside the work ---------------- */
 const ACTION_ICON = { pay: "ph-wallet", render: "ph-film-reel", reshoot: "ph-arrow-clockwise", inspect: "ph-eye",
   storyboard: "ph-film-slate", brief: "ph-note-pencil", shoot: "ph-aperture", film: "ph-film-reel", refilm: "ph-film-reel",
   rewrite: "ph-pen-nib", layout: "ph-text-aa", set_words: "ph-pen-nib" };
+const GAP = 15 * 60;   // a quiet stretch this long gets a time stamp
+let threadKey = "";    // which messages the thread was last built from
+let pending = null;    // sent, not yet back from the server
 
-function renderChat() {
-  const log = $("#chat-log");
-  const msgs = V.chat || [];
-  if (log.dataset.sid !== V.id || msgs.length < chatShown) { log.innerHTML = ""; chatShown = 0; log.dataset.sid = V.id; }
-  log.querySelector(".typing")?.remove();
-  msgs.slice(chatShown).forEach((m) => {
-    const li = document.createElement("li");
-    li.className = m.who === "action" ? `action${m.ok === false ? " bad" : ""}` : m.who;
-    if (m.who === "action") {
-      const icon = document.createElement("i");
-      icon.className = `ph ${m.ok === false ? "ph-warning" : ACTION_ICON[m.tool] || "ph-check"}`;
-      li.append(icon);
-      if (m.detail) {
-        const d = document.createElement("details");
-        d.innerHTML = "<summary></summary><div class=\"detail\"></div>";
-        d.querySelector("summary").textContent = m.text;
-        d.querySelector(".detail").textContent = m.detail;
-        li.append(d);
-      } else li.append(document.createTextNode(m.text));
-    } else li.textContent = m.text;
-    log.append(li);
-    if (chatShown && !reduceMotion) enter(li, { opacity: 0, transform: "translateY(8px)" }, { duration: 450 });
-  });
-  chatShown = msgs.length;
-  const busy = Boolean(V.agent?.busy);
-  if (busy) { const t = document.createElement("li"); t.className = "typing"; t.innerHTML = "<span></span><span></span><span></span>"; log.append(t); }
-  $("#agent-line").classList.toggle("thinking", busy);
-  $("#chat-panel").classList.toggle("thinking", busy);
-  document.body.classList.toggle("agent-working", busy);
-  $("#review-toggle").checked = Boolean(V.agent?.review);
-  log.scrollTop = log.scrollHeight;
-  const latest = [...msgs].reverse().find((m) => m.who === "agent");
-  if (latest && latest.at !== lastSaid) {
-    if (lastSaid !== null) say(latest.text);
-    lastSaid = latest.at;
-  }
+const clock = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+const scroller = () => $("#dock-scroll");
+const nearBottom = () => { const s = scroller(); return s.scrollHeight - s.scrollTop - s.clientHeight < 90; };
+let pinned = true;     // reading the latest: new lines keep the thread scrolled to the end
+function toBottom(smooth = false) {
+  const s = scroller();
+  s.scrollTo({ top: s.scrollHeight, behavior: smooth && !reduceMotion ? "smooth" : "auto" });
+  pinned = true;
+  $("#jump").hidden = true;
 }
 
-function openChat(open) {
-  $("#chat-panel").hidden = !open;
-  $("#chat-toggle").setAttribute("aria-expanded", String(open));
-  if (open) { enter($("#chat-panel"), { opacity: 0, transform: "translateY(10px)" }, { duration: 400 }); $("#chat-log").scrollTop = 1e9; }
+function li(cls, text) {
+  const el = document.createElement("li");
+  el.className = cls;
+  if (text != null) el.textContent = text;
+  return el;
+}
+
+function you(text, cls = "") {
+  const el = li(`you${cls}`);
+  el.append(Object.assign(document.createElement("div"), { className: "bubble", textContent: text }));
+  return el;
+}
+
+function step(m, i) {
+  const el = li(`step${m.ok === false ? " bad" : ""}`);
+  const icon = document.createElement("i");
+  icon.className = `ph ${m.ok === false ? "ph-warning" : ACTION_ICON[m.tool] || "ph-check"}`;
+  el.append(icon);
+  if (m.detail) {
+    const d = document.createElement("details");
+    d.dataset.i = i;
+    d.innerHTML = "<summary></summary><div class=\"detail\"></div>";
+    d.querySelector("summary").textContent = m.text;
+    d.querySelector(".detail").textContent = m.detail;
+    el.append(d);
+  } else el.append(Object.assign(document.createElement("span"), { textContent: m.text }));
+  return el;
+}
+
+// You on the right; the director's words in plain text with its work folded in as small steps.
+function buildThread(log, msgs, firstNew, open) {
+  let steps = null;
+  let prev = null;
+  msgs.forEach((m, i) => {
+    const fresh = i >= firstNew;
+    if (!prev || m.at - prev.at > GAP) log.append(li("stamp", clock(m.at)));
+    let el = null;
+    if (m.who === "action") {
+      if (!steps) {
+        el = li("steps");
+        steps = document.createElement("ol");
+        el.append(steps);
+        if (!prev || prev.who === "you") el.classList.add("turn");
+      }
+      const s = step(m, i);
+      steps.append(s);
+      if (open.has(String(i))) s.querySelector("details")?.setAttribute("open", "");
+      if (fresh && !el) enter(s, { opacity: 0, transform: "translateY(6px)" }, { duration: 400 });
+    } else {
+      steps = null;
+      if (m.who === "you") el = you(m.text);
+      else {
+        el = li("agent", m.text);
+        if (!prev || prev.who === "you") el.classList.add("turn");
+      }
+    }
+    if (el) {
+      log.append(el);
+      if (fresh) enter(el, { opacity: 0, transform: "translateY(10px)" }, { duration: 450 });
+    }
+    prev = m;
+  });
+}
+
+// The last row: the director typing, or the camera at work.
+function renderLive() {
+  const log = $("#chat-log");
+  log.querySelector(".live")?.remove();
+  if (!V) return;
+  const running = V.job?.running;
+  let row = null;
+  if (pending || V.agent?.busy) {
+    row = li("live typing");
+    row.innerHTML = "<span></span><span></span><span></span>";
+    row.setAttribute("aria-label", "The director is thinking");
+  } else if (running || V.agent?.waiting === "slot") {
+    row = li("live working");
+    const b = V.board;
+    const what = V.agent?.waiting === "slot" ? "Waiting for the camera"
+      : liveText || (V.phase === "shooting" ? "Shooting the stills" : "Filming the camera moves");
+    let count = "";
+    if (b && running) {
+      count = V.phase === "shooting"
+        ? `${b.keyframes.filter((k) => k.url).length} of ${b.keyframes.length} stills`
+        : `${b.moves.filter((m) => m.url).length} of ${b.moves.length} moves`;
+    }
+    row.innerHTML = "<i class=\"ph ph-circle-notch spin\"></i><span></span><em></em>";
+    row.querySelector("span").textContent = what;
+    row.querySelector("em").textContent = count;
+  }
+  if (row) log.append(row);
+  if (pinned) toBottom();
+}
+
+function statusLine() {
+  const a = V.agent || {};
+  if (pending || a.busy) return "Thinking…";
+  if (V.job?.running) return V.phase === "shooting" ? "Shooting your stills" : "Filming your camera moves";
+  if (a.waiting === "slot") return "Waiting for the camera";
+  if (V.phase === "board" && !V.pay?.paid) return "Storyboard ready";
+  if (V.phase === "keyframes") return "Waiting for you to look at the stills";
+  if (V.phase === "deliver") return "Your site is ready";
+  return "Here when you need me";
+}
+
+// Bigger or smaller, with the price it would be, before paying. Each sends a plain request to the director.
+function sizeChips() {
+  if (!prices || !V.board || V.agent?.mode === "autopilot") return [];
+  const n = V.board.moves.length;
+  const res = V.board.resolution || V.controls?.resolution || "768P";
+  const out = [];
+  if (n < 6) out.push([`Longer · ${n + 1} moves · ${usd(priceFor(n + 1, res))}`, `Make it longer: ${n + 1} camera moves.`]);
+  if (n > 2) out.push([`Shorter · ${n - 1} moves · ${usd(priceFor(n - 1, res))}`, `Make it shorter: ${n - 1} camera moves.`]);
+  out.push(res === "1080P" ? [`Standard 768p · ${usd(priceFor(n, "768P"))}`, "Make it standard quality, 768p."]
+    : [`Sharper · 1080p · ${usd(priceFor(n, "1080P"))}`, "Make it sharper: 1080p."]);
+  return out;
+}
+
+// One-tap replies that fit where the film is: [label, what gets sent].
+function suggestions() {
+  if (pending || V.agent?.busy || V.job?.running) return [];
+  const same = (t) => [t, t];
+  return {
+    board: V.pay?.paid ? [] : sizeChips(),
+    keyframes: [same("Which still is weakest?")],
+    deliver: [same("Sharper words"), same("Gallery-style type"), same("A bigger ending")],
+  }[V.phase] || [];
+}
+
+function renderSuggest() {
+  const box = $("#suggest");
+  const list = suggestions();
+  const key = list.map((x) => x[1]).join("|");
+  if (box.dataset.key === key) return;
+  box.dataset.key = key;
+  box.innerHTML = "";
+  list.forEach(([label, text]) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "chip";
+    b.textContent = label;
+    b.addEventListener("click", () => send(text));
+    box.append(b);
+  });
+}
+
+function renderChat() {
+  const msgs = V.chat || [];
+  const busy = Boolean(V.agent?.busy);
+  document.body.classList.toggle("dock-off", V.phase === "pitch" && !msgs.length && !busy && !pending);
+  document.body.classList.toggle("agent-working", busy);
+  $("#dock").classList.toggle("thinking", busy || Boolean(pending));
+  const log = $("#chat-log");
+  const key = `${V.id}:${msgs.length}:${msgs.at(-1)?.at ?? ""}`;
+  if (key !== threadKey) {
+    const sameFilm = threadKey.startsWith(`${V.id}:`);
+    const firstNew = sameFilm ? Number(threadKey.split(":")[1]) : msgs.length;  // a fresh load does not animate
+    const open = new Set([...log.querySelectorAll("details[open]")].map((d) => d.dataset.i));
+    log.innerHTML = "";
+    buildThread(log, msgs, firstNew, open);
+    threadKey = key;
+    if (sameFilm && !pinned && msgs.length > firstNew) $("#jump").hidden = false;
+  }
+  log.querySelector(".pending")?.remove();
+  if (pending) log.append(you(pending, " pending"));
+  if (!msgs.length && !pending) log.append(li("empty", "Ask for anything in plain words: another angle, a calmer ending, new words. The director answers here and does the work."));
+  $("#dock-status").textContent = statusLine();
+  renderSuggest();
+  renderDecision();
+  if (pinned || pending) toBottom();
+  renderLive();
+}
+
+// Below 900px the conversation is a sheet that slides up over the work.
+function openDock(open) {
+  $("#dock").classList.toggle("open", open);
+  $("#dock-toggle").setAttribute("aria-expanded", String(open));
+  $("#dock-toggle").setAttribute("aria-label", open ? "Hide the conversation" : "Show the conversation");
+  if (open) toBottom();
+}
+
+async function send(text) {
+  if (V.phase === "pitch" && !V.pitch) { $("#pitch-input").value = text; return $("#pitch-go").click(); }
+  pending = text;
+  renderChat();
+  toBottom(true);
+  try {
+    const v = await api("/api/chat", { session: V.id, text });
+    pending = null;
+    render(v, { quiet: true });
+  } catch (err) {
+    pending = null;
+    renderChat();
+    $("#chat-input").value = text;
+    fitComposer();
+    say(`Could not send that: ${err.message}`, "warn");
+  }
 }
 
 // While the director thinks or a render runs, keep the screen in step with the server.
@@ -1234,34 +1183,46 @@ function schedulePoll() {
   }, 1600);
 }
 
-$("#chat-toggle").addEventListener("click", () => openChat($("#chat-panel").hidden));
-$("#chat-close").addEventListener("click", () => openChat(false));
-$("#review-toggle").addEventListener("change", async (e) => {
-  try { render(await api("/api/agent/settings", { session: V.id, review: e.target.checked }), { quiet: true }); }
-  catch (err) { say(`Could not change that: ${err.message}`, "warn"); }
+function fitComposer() {
+  const t = $("#chat-input");
+  t.style.height = "auto";
+  t.style.height = `${Math.min(t.scrollHeight, 160)}px`;
+  $("#chat-send").disabled = !t.value.trim();
+}
+
+$("#chat-input").addEventListener("input", fitComposer);
+$("#chat-input").addEventListener("focus", () => openDock(true));
+$("#chat-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); $("#chat-form").requestSubmit(); }
 });
-$("#chat-form").addEventListener("submit", async (e) => {
+$("#chat-form").addEventListener("submit", (e) => {
   e.preventDefault();
   const input = $("#chat-input");
   const text = input.value.trim();
   if (!text) return;
   input.value = "";
-  if (V.phase === "pitch" && !V.pitch) { $("#pitch-input").value = text; return $("#pitch-go").click(); }
-  try { render(await api("/api/chat", { session: V.id, text }), { quiet: true }); openChat(true); }
-  catch (err) { input.value = text; say(`Could not send that: ${err.message}`, "warn"); }
+  fitComposer();
+  send(text);
 });
+$("#dock-head").addEventListener("click", () => openDock(!$("#dock").classList.contains("open")));
+$("#jump").addEventListener("click", () => toBottom(true));
+$("#dock-scroll").addEventListener("scroll", () => { pinned = nearBottom(); if (pinned) $("#jump").hidden = true; }, { passive: true });
+new ResizeObserver(() => { if (pinned) toBottom(); }).observe($("#chat-log"));
+// On phones the sheet floats over the work: the page leaves room for it, however tall the decision card is.
+new ResizeObserver(([e]) => { document.body.style.setProperty("--sheet", `${Math.ceil(e.borderBoxSize[0].blockSize)}px`); }).observe($("#dock"));
+fitComposer();
 
 /* ---------------- new film ---------------- */
 $("#new-btn").addEventListener("click", async () => {
   if (events) { events.close(); events = null; }
   history.replaceState(null, "", "/studio");
   $("#pitch-input").value = "";
-  $("#ledger-list").innerHTML = "";
-  $("#ledger").hidden = true;
   copy = null;
   shownScene = null;
-  lastSaid = null;
-  openChat(false);
+  threadKey = "";
+  pending = null;
+  liveText = "";
+  openDock(false);
   render(await api("/api/session", {}));
 });
 
@@ -1269,8 +1230,8 @@ $("#new-btn").addEventListener("click", async () => {
 const TOUR = [
   { title: "Welcome to the studio", body: "Pitch any site: a product, your portfolio, an event, something strange. An agent turns it into a scroll film with words. This shows the path." },
   { target: "#pitch-box", title: "Pitch it in one go", body: "Say what it is and how it should feel. Add images when your subject must look exactly right. If you say enough, you skip every question." },
-  { target: "#stepper", title: "Pay once, the director does the rest", body: "One payment at the storyboard covers the whole site. The director shoots the stills, checks every one itself, reshoots weak ones within the film's allowance, and films the moves." },
-  { target: "#agent-line", title: "Talk to it any time", body: "Ask for changes in plain words: another angle, a calmer ending, new words, a different type style. Or edit the words yourself in the preview. You can close the tab; your film waits here.", last: true },
+  { target: "#stepper", title: "You make two calls; the director does the rest", body: "You agree the price once the storyboard is drafted, and you look at the stills before anything is filmed. In between, the director shoots, checks every still itself, reshoots weak ones and films the moves." },
+  { target: "#dock", title: "Talk to it any time", body: "Once you pitch, the director keeps a conversation beside your film. Ask for changes in plain words: another angle, a calmer ending, new words, a different type style. You can close the tab; your film waits here.", last: true },
 ];
 let tourIdx = 0;
 function placeTour() {
@@ -1323,19 +1284,12 @@ addEventListener("keydown", (e) => {
   try {
     if (shared) { v = await api(`/api/session?session=${encodeURIComponent(shared)}`).catch(() => null); history.replaceState(null, "", "/studio"); }
     if (!v && run) v = await api("/api/open", { run });
-    else if (store.get(SID_KEY)) v = await api(`/api/session?session=${store.get(SID_KEY)}`).catch(() => null);
+    else if (!v && store.get(SID_KEY)) v = await api(`/api/session?session=${store.get(SID_KEY)}`).catch(() => null);
     v ||= await api("/api/session", {});
   } catch (e) { say(`Could not reach the studio: ${e.message}`, "warn"); return; }
   const prefill = new URLSearchParams(location.search).get("pitch");
   if (prefill && v.phase !== "pitch") v = await api("/api/session", {});
   if (prefill) { $("#pitch-input").value = prefill.slice(0, 3000); history.replaceState(null, "", "/studio"); }
   render(v, { quiet: true });
-  if (v.phase !== "pitch") {
-    const back = { questions: "Picking up where you left off: a question or two remained.", confirm: "Your brief is waiting.",
-      board: "Your storyboard is waiting for approval.", shooting: "Still shooting your keyframes. They land here as they finish.",
-      keyframes: "Your keyframes are here. Redo any, then film it.", filming: "Still filming. The moves land here as they finish.",
-      deliver: "Your site is here. Click any words in the preview to change them." };
-    say(back[v.phase] || "Welcome back.");
-  }
   if (store.get("frameline-tour-2") !== "done" && v.phase === "pitch") setTimeout(openTour, reduceMotion ? 0 : 900);
 })();

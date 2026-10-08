@@ -101,9 +101,9 @@
       <p>You talk to one agent, the director, in the bar at the bottom of the studio. It runs the studio by calling the same steps the buttons call: read the brief, draft the storyboard, shoot, inspect, reshoot, film, refilm, rewrite, re-lay out, set exact words. One tool per step, and it decides which.</p>
       <ul>
         <li><b>It checks its own work.</b> When the stills land, the picture editor scores each one against its shot. The director reshoots a clearly weak still on its own (up to two per film) and tells you what it fixed. Its scores show on the stills.</li>
-        <li><b>It keeps going.</b> Free steps need no permission. After the stills it films, unless you tick "Check with me before filming" or ask to review.</li>
+        <li><b>You make two calls.</b> The price, once the storyboard is drafted (with longer, shorter or sharper options priced next to it), and the stills, before anything is filmed. Both sit right under the director's question. Everything else it does on its own.</li>
         <li><b>It works inside a budget it cannot change.</b> You pay once. Every reshoot and refilm comes out of that film's allowance, and the server, not the model, refuses anything past it. The director sees how many reshoots and refilms are left, never what they cost.</li>
-        <li><b>You can interrupt any time.</b> Ask for another angle, calmer words, a poster style; the buttons still work too, and the director picks up from whatever you did.</li>
+        <li><b>You can interrupt any time.</b> Ask for another angle, calmer words, a poster style. You can also redo a still, refilm a move or click any words on the finished site yourself; the director picks up from whatever you did.</li>
       </ul>
       <p class="note">This is where the 1Claw guardrails earn their place. The director chooses what to spend on; it can only spend from its own 1Claw-held wallet, only to its generation provider, and only within the caps a human set. Autonomy inside hard limits.</p>
     </section>
@@ -114,7 +114,7 @@
       <ol class="steps">
         <li><b>Order.</b> <code>POST /api/agent/films</code> with JSON: <code>brief</code> (required), <code>scenes</code> (2 to 6 camera moves), <code>resolution</code> (<code>768P</code> or <code>1080P</code>), optional <code>type</code>, <code>style</code> and <code>images</code> (up to 6 https URLs).</li>
         <li><b>Pay.</b> The first call answers <code>402</code> with a standard x402 v2 challenge: <code>exact</code> USDC on Base, to the studio's wallet. Retry with <code>PAYMENT-SIGNATURE</code> (or <code>X-PAYMENT</code>); the studio verifies and settles it through the PayAI facilitator. Agents without x402 can send USDC and retry with <code>X-Payment-Tx: &lt;hash&gt;</code>. A 1Claw agent pays with <code>1claw pay</code>, inside its own guardrails.</li>
-        <li><b>Follow.</b> The paid call answers <code>202</code> with an <code>id</code>. Poll <code>GET /api/agent/films/&lt;id&gt;</code>: <code>state</code> is <code>working</code>, <code>done</code> or <code>needs_attention</code>, with the director's notes.</li>
+        <li><b>Follow.</b> The paid call answers <code>202</code> with an <code>id</code>. Poll <code>GET /api/agent/films/&lt;id&gt;</code>: <code>state</code> is <code>working</code>, <code>done</code> or <code>needs_attention</code>, with the director's notes. To answer the director or ask for a change, <code>POST /api/agent/films/&lt;id&gt;/reply</code> with <code>{"text": "..."}</code>; no new payment.</li>
         <li><b>Deliver.</b> When done, <code>result</code> holds the live <code>site</code>, the <code>film</code> mp4, the <code>zip</code>, a hand-off <code>page</code> (<code>/f/&lt;id&gt;</code>) for a person, and an <code>edit</code> link where they can change the words in the studio.</li>
       </ol>
       <p>Discovery: <code>GET /api/agent</code> (the service card, JSON) and <code>/llms.txt</code>. A retried payment never makes a second film: the same authorization returns the same order.</p>

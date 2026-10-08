@@ -744,8 +744,6 @@ def film_state(s):
         st["your_inspection"] = a["inspection"]
     if (s.get("payment") or {}).get("locked"):
         st["paid_for"] = s["payment"]["locked"]
-    if a.get("mode") != "autopilot":
-        st["customer_wants_to_review_stills_before_filming"] = bool(a.get("review"))
     return st
 
 
@@ -753,7 +751,8 @@ def conversation(s):
     lines = []
     for m in (s.get("chat") or [])[-30:]:
         who = {"you": "customer", "agent": "you said", "action": "result"}.get(m["who"], m["who"])
-        lines.append(f"[{who}] {m['text']}")
+        why = f" ({m['detail'][:400]})" if m.get("ok") is False and m.get("detail") else ""
+        lines.append(f"[{who}] {m['text']}{why}")
     return lines or ["(nothing yet)"]
 
 
@@ -826,9 +825,22 @@ def run_tool(s, tool, args):
     return "", False
 
 
+TOOL_TRIES = {"brief": "read the pitch", "storyboard": "draft the storyboard", "inspect": "check the stills",
+              "reshoot": "reshoot that still", "shoot": "start shooting", "film": "start filming", "refilm": "refilm that move",
+              "rewrite": "rewrite the words", "layout": "lay out the words", "set_words": "change the words"}
 TOOL_LABELS = {"brief": "Read the pitch", "storyboard": "Drafted the storyboard", "inspect": "Checked every still",
                "rewrite": "Rewrote the words", "layout": "Re-laid out the words", "set_words": "Changed the words",
                "shoot": "Started shooting the stills", "film": "Started filming", "refilm": "Started refilming a move"}
+
+
+def true_prices(s, text):
+    """The model must not quote prices, but if it does, the customer only ever reads the real one."""
+    if not re.search(r"\$\s?\d", text):
+        return text
+    usd = price_usd(s) if s.get("name") and os.path.exists(cfg_path(s["name"])) else None
+    if usd is not None:
+        return re.sub(r"\$\s?\d[\d,]*(?:\.\d+)?", f"${usd:.2f}", text)
+    return " ".join(x for x in re.split(r"(?<=[.!?])\s+", text) if not re.search(r"\$\s?\d", x)) or text
 
 
 def agent_turn(s, trigger):
@@ -851,7 +863,7 @@ def agent_turn(s, trigger):
                 a["waiting"] = "customer"
                 return
             if d["say"]:
-                chat(s, "agent", d["say"])
+                chat(s, "agent", true_prices(s, d["say"]))
             if d["tool"] in ("ask", "done"):
                 a["waiting"] = "customer"
                 if d["tool"] == "done" and a.get("mode") == "autopilot":
@@ -862,12 +874,14 @@ def agent_turn(s, trigger):
             except Refusal as e:
                 if e.extra.get("busy"):
                     if rendering(s):
-                        chat(s, "action", f"{d['tool']} waits: this film is still rendering.", tool=d["tool"], ok=False)
+                        chat(s, "action", f"Could not {TOOL_TRIES.get(d['tool'], d['tool'])} yet: this film is still rendering.",
+                             tool=d["tool"], ok=False)
                         return
                     chat(s, "action", "Waiting for the camera: another film is rendering.", tool=d["tool"])
                     a["waiting"] = "slot"
                     return
-                chat(s, "action", f"{d['tool']} refused: {e}", tool=d["tool"], ok=False)
+                chat(s, "action", f"Could not {TOOL_TRIES.get(d['tool'], d['tool'])}", tool=d["tool"], ok=False,
+                     detail=str(e)[:600])
                 if e.extra.get("need_payment") and a.get("mode") == "chat":
                     a["waiting"] = "payment"
                 continue
@@ -882,6 +896,16 @@ def agent_turn(s, trigger):
             a["waiting"] = "job"  # whatever was said, the render's outcome still wakes the agent
         a["busy"] = False
         s.pop("_turn_trigger", None)
+        save(s)
+
+
+def customer_did(s, text):
+    """A decision made with a button: it reads in the conversation as the customer's own words,
+    and the director is woken when the render it started finishes."""
+    chat(s, "you", text)
+    a = agent_of(s)
+    if rendering(s) and not a.get("busy"):
+        a["waiting"] = "job"
         save(s)
 
 
@@ -914,7 +938,7 @@ def render_outcome(s):
     if s["phase"] == "keyframes":
         b = board_view(s["name"])
         done = sum(1 for k in b["keyframes"] if k["url"])
-        return f"The stills are in ({done} of {len(b['keyframes'])}). Inspect them."
+        return f"The stills are in ({done} of {len(b['keyframes'])})."
     if s["phase"] == "deliver":
         return "The film is finished; the site and zip are ready."
     return f"The render ended; the film is at '{s['phase']}'."
@@ -1119,6 +1143,7 @@ def llms_txt(base):
     return (f"# Frameline\n\n> {c['what']}\n\n## Hire it (for agents)\n\n"
             f"- Order: POST {c['order']['url']} with JSON: {c['order']['body']}.\n"
             f"- Pay: {c['order']['payment']}\n- Status: GET {c['status']['url']} ({c['status']['states']})\n"
+            f"- Reply to the director: POST {c['reply']['url']} with {c['reply']['body']}. {c['reply']['when']}\n"
             f"- Time: {c['time']}\n- Service card (JSON): {base}/api/agent\n\n## About\n\n{c['operator']}\n")
 
 
@@ -1138,6 +1163,8 @@ def service_card(base):
         "status": {"method": "GET", "url": f"{base}/api/agent/films/<id>",
                    "states": "working, done, needs_attention; when done, 'result' has site, film, zip and the page "
                              "to hand to a person, who can edit the words at 'edit'."},
+        "reply": {"method": "POST", "url": f"{base}/api/agent/films/<id>/reply", "body": '{"text": "..."}',
+                  "when": "The film needs attention, or you want a change (new words, another angle). No new payment."},
         "time": "About 5 to 10 minutes per film.",
         "operator": "The studio is itself a 1Claw agent: it signs with 1Claw-held keys, pays its own generation bills "
                     "within 1Claw guardrails, and keeps its payment ledger in 1Claw memory.",
@@ -1269,6 +1296,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.api_open(data)
             if p == "/api/agent/films":
                 return self.api_order(data)
+            m = re.fullmatch(r"/api/agent/films/([0-9a-f]{16})/reply", p)
+            if m:
+                return self.api_order_reply(SESSIONS.get(m[1]), data)
             s = self.session(q, data)
             if not s:
                 return self.send_json({"error": "Unknown session. Reload the page."}, 400)
@@ -1348,6 +1378,17 @@ class Handler(BaseHTTPRequestHandler):
         s = start_order(terms, payment, base)
         return self.send_json(order_view(s, base), 202, extra)
 
+    def api_order_reply(self, s, data):
+        """The ordering agent answers the director, e.g. when the film needs attention. Same film, no new payment."""
+        if not s or not s.get("order"):
+            return self.send_json({"error": "No such film."}, 404)
+        text = str(data.get("text") or "").strip()[:2000]
+        if not text:
+            return self.send_json({"error": 'Send JSON {"text": "..."}.'}, 400)
+        chat(s, "you", f"[The ordering agent replies.] {text}")
+        kick(s, "customer")
+        return self.send_json(order_view(s, self.base_url()), 202)
+
     def record_payment(self, payment):
         try:
             ledger.record({"tx": payment["tx"], "from": payment["address"], "usd": payment["usd"], "via": payment["via"],
@@ -1410,8 +1451,24 @@ class Handler(BaseHTTPRequestHandler):
         return self.send_json(view(s))
 
     def paid(self, s, line):
+        """Paying is the approval to shoot: the stills start straight away, and the director picks up when they land."""
         chat(s, "action", line, tool="pay")
-        if (s.get("agent") or {}).get("waiting") in ("payment", "customer") or any(m["who"] == "you" for m in s.get("chat") or []):
+        a = agent_of(s)
+        if s["phase"] == "board" and not rendering(s):
+            try:
+                core_shoot(s)
+                chat(s, "action", TOOL_LABELS["shoot"], tool="shoot")
+                if not a.get("busy"):
+                    a["waiting"] = "job"
+                    save(s)
+                return
+            except Refusal as e:
+                if e.extra.get("busy") and not a.get("busy"):
+                    chat(s, "action", "Waiting for the camera: another film is rendering.", tool="shoot")
+                    a["waiting"] = "slot"  # the watcher wakes the director, who shoots
+                    save(s)
+                    return
+        if a.get("waiting") in ("payment", "customer") or any(m["who"] == "you" for m in s.get("chat") or []):
             kick(s, "customer")
 
     def api_pay_confirm(self, s, data):
@@ -1538,24 +1595,24 @@ class Handler(BaseHTTPRequestHandler):
         if not data.get("approve"):
             return self.send_json({"error": "Shooting needs explicit approval."}, 400)
         core_shoot(s)
-        chat(s, "action", "You approved the storyboard; shooting the stills.", tool="shoot")
+        customer_did(s, "Shoot the stills.")
         return self.send_json(view(s))
 
     def api_redo(self, s, data):
         core_redo(s, data.get("id"), data.get("prompt"))
-        chat(s, "action", f"You asked to reshoot still {str(data.get('id')).upper()}.", tool="reshoot")
+        customer_did(s, f"Reshoot still {str(data.get('id')).upper()}: {str(data.get('prompt') or '')[:300]}")
         return self.send_json(view(s))
 
     def api_refilm(self, s, data):
         core_refilm(s, data.get("id"), data.get("prompt"))
-        chat(s, "action", f"You asked to refilm move {str(data.get('id')).upper()}.", tool="refilm")
+        customer_did(s, f"Refilm the move {str(data.get('id')).upper()}: {str(data.get('prompt') or '')[:300]}")
         return self.send_json(view(s))
 
     def api_film(self, s, data):
         if not data.get("approve"):
             return self.send_json({"error": "Filming needs explicit approval."}, 400)
         core_film(s)
-        chat(s, "action", "You approved the stills; filming.", tool="film")
+        customer_did(s, "The stills are good. Film it.")
         return self.send_json(view(s))
 
     def api_copy(self, s, data):

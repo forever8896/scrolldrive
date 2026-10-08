@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Frameline Studio</title>
-<meta name="description" content="Pitch a film site to the Frameline agent, approve the keyframes, then the film, and edit the words live.">
+<meta name="description" content="Pitch a film site to the Frameline director. Agree the price, look at the stills, and edit the words live.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist:ital,wght@0,400;0,500;0,600;0,700;1,500&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -21,9 +21,9 @@
   <ol class="stepper" id="stepper" aria-label="Progress">
     <li data-step="brief"><span class="dot"><i class="ph ph-chat-circle-text"></i></span><span class="lbl">Brief</span></li>
     <li data-step="board"><span class="dot"><i class="ph ph-film-slate"></i></span><span class="lbl">Storyboard</span></li>
-    <li data-step="keyframes"><span class="dot"><i class="ph ph-aperture"></i></span><span class="lbl">Keyframes</span></li>
+    <li data-step="keyframes"><span class="dot"><i class="ph ph-aperture"></i></span><span class="lbl">Stills</span></li>
     <li data-step="film"><span class="dot"><i class="ph ph-film-reel"></i></span><span class="lbl">Film</span></li>
-    <li data-step="deliver"><span class="dot"><i class="ph ph-package"></i></span><span class="lbl">Deliver</span></li>
+    <li data-step="deliver"><span class="dot"><i class="ph ph-package"></i></span><span class="lbl">Site</span></li>
     <span class="stepper-fill" id="stepper-fill" aria-hidden="true"></span>
   </ol>
 
@@ -33,6 +33,7 @@
   </div>
 </header>
 
+<div class="work">
 <main class="room" id="room">
   <div class="light" aria-hidden="true"></div>
   <div class="bignum" id="bignum" aria-hidden="true"></div>
@@ -71,50 +72,17 @@
     </div>
   </section>
 
-  <!-- 2. Questions, one at a time -->
-  <section class="scene" data-scene="questions" hidden>
-    <div class="tray" id="tray" aria-label="What I have so far"></div>
-    <div class="q-wrap" id="q-wrap"></div>
-  </section>
-
-  <!-- 3. Brief + controls -->
-  <section class="scene" data-scene="confirm" hidden>
-    <div class="confirm">
-      <div class="confirm-main">
-        <p class="eyebrow">The brief</p>
-        <h2 class="kinetic confirm-title" id="c-headline"></h2>
-        <dl class="brief-rows" id="brief-rows"></dl>
-        <div class="c-refs" id="c-refs"></div>
+  <!-- 2. The brief: what the director understood, while it writes the shots -->
+  <section class="scene" data-scene="brief" hidden>
+    <div class="brief">
+      <p class="eyebrow">What I understood</p>
+      <h2 class="kinetic confirm-title" id="c-headline"></h2>
+      <dl class="brief-rows" id="brief-rows"></dl>
+      <div class="c-refs" id="c-refs"></div>
+      <div class="directing" id="directing" hidden>
+        <p class="eyebrow">Writing the shots</p>
+        <div class="ghost-strip" id="ghost-strip"></div>
       </div>
-      <aside class="controls" aria-label="Controls">
-        <div class="ctl">
-          <div class="ctl-label">Kind of site</div>
-          <div class="seg" id="ctl-type" role="radiogroup"></div>
-        </div>
-        <div class="ctl">
-          <div class="ctl-label">Look</div>
-          <div class="seg seg-wrap" id="ctl-style" role="radiogroup"></div>
-        </div>
-        <div class="ctl">
-          <div class="ctl-label">Length <span class="ctl-val" id="len-val"></span></div>
-          <input type="range" id="ctl-scenes" min="2" max="6" step="1" aria-label="Number of camera moves">
-          <div class="ticks" aria-hidden="true"><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span></div>
-        </div>
-        <div class="ctl">
-          <div class="ctl-label">Quality</div>
-          <div class="seg" id="ctl-res" role="radiogroup"></div>
-        </div>
-        <div class="price">
-          <div><div class="fig" id="p-price">$0</div><div class="fig-label">Your price, everything included</div></div>
-        </div>
-        <button class="btn btn-primary btn-block" id="direct-btn">Direct the storyboard <i class="ph ph-sparkle"></i></button>
-        <button class="link-btn" id="repitch-btn"><i class="ph ph-arrow-counter-clockwise"></i> Change the pitch</button>
-      </aside>
-    </div>
-    <div class="directing" id="directing" hidden>
-      <p class="eyebrow">The director is at work</p>
-      <h2 class="kinetic" id="directing-title">Writing the shots</h2>
-      <div class="ghost-strip" id="ghost-strip"></div>
     </div>
   </section>
 
@@ -126,37 +94,9 @@
         <h2 id="board-title"></h2>
         <p id="board-tagline"></p>
       </div>
-      <div class="board-status" id="board-status"></div>
     </div>
     <div class="strip" id="strip"></div>
     <div class="progress" aria-hidden="true"><span id="progress-bar"></span></div>
-    <div class="board-foot">
-      <div class="gate" id="gate">
-        <div class="gate-copy">
-          <h3 id="gate-title"></h3>
-          <p id="gate-body"></p>
-        </div>
-        <div class="gate-actions">
-          <button class="link-btn" id="gate-back"></button>
-          <button class="btn btn-primary" id="gate-go"></button>
-        </div>
-        <div class="paybox" id="paybox" hidden>
-          <div class="pay-row">
-            <span class="pay-wallet" id="pay-wallet"></span>
-            <button class="link-btn" type="button" id="pay-manual-btn"><i class="ph ph-qr-code"></i> Pay from another wallet</button>
-          </div>
-          <form class="pay-manual" id="pay-manual" hidden>
-            <p>Send <b id="pm-amount"></b> USDC on <b>Base</b> to the studio wallet, then paste the transaction hash.</p>
-            <div class="pm-addr"><code id="pm-to"></code><button type="button" class="link-btn" id="pm-copy"><i class="ph ph-copy"></i> Copy</button></div>
-            <div class="pm-tx"><input id="pm-tx" placeholder="0x… transaction hash" autocomplete="off" spellcheck="false"><button class="btn btn-ghost btn-sm">Verify</button></div>
-          </form>
-        </div>
-      </div>
-      <div class="ledger" id="ledger" hidden>
-        <div class="ledger-head"><i class="ph ph-receipt"></i> Agent activity</div>
-        <ol id="ledger-list"></ol>
-      </div>
-    </div>
   </section>
 
   <!-- 5. Deliver, with live words -->
@@ -187,41 +127,59 @@
           <h2>Words and type</h2>
           <span class="words-tools"><span class="save-state" id="save-state"></span><button class="link-btn undo-btn" id="undo-btn" type="button" title="Undo the agent's last rewrite or layout"><i class="ph ph-arrow-u-up-left"></i> Undo</button></span>
         </div>
-        <form class="rewrite" id="rewrite">
-          <label class="sr-only" for="rewrite-input">Direct the agent</label>
-          <input id="rewrite-input" placeholder="Direct the agent: funnier, gallery feel, bigger ending">
-          <div class="agent-btns">
-            <button class="btn btn-ghost btn-sm" type="submit" data-act="words"><i class="ph ph-pen-nib"></i> Rewrite words</button>
-            <button class="btn btn-ghost btn-sm" type="submit" data-act="layout"><i class="ph ph-layout"></i> Lay out text</button>
-          </div>
-        </form>
         <div class="voice" id="voice" hidden></div>
         <div class="word-fields" id="word-fields"></div>
       </aside>
     </div>
   </section>
 
-  <!-- The director: the latest line, and a conversation that opens above it -->
-  <section class="chat-panel" id="chat-panel" hidden aria-label="Conversation with the director">
-    <header class="chat-head">
-      <span class="chat-title"><span class="agent-dot" aria-hidden="true"></span> Director</span>
-      <label class="review-toggle" title="Off: the director films as soon as it is happy with the stills"><input type="checkbox" id="review-toggle"> Check with me before filming</label>
-      <button class="link-btn" type="button" id="chat-close" aria-label="Close the conversation"><i class="ph ph-caret-down"></i></button>
-    </header>
-    <ol class="chat-log" id="chat-log" aria-live="polite"></ol>
-  </section>
-  <div class="agent-line" id="agent-line">
-    <button class="agent-toggle" type="button" id="chat-toggle" aria-expanded="false" aria-controls="chat-panel" title="Open the conversation">
-      <span class="agent-dot" aria-hidden="true"></span>
-      <span id="agent-text" aria-live="polite"></span>
-    </button>
-    <form class="chat-form" id="chat-form" autocomplete="off">
-      <label class="sr-only" for="chat-input">Talk to the director</label>
-      <input id="chat-input" placeholder="Talk to the director" maxlength="2000">
-      <button class="btn btn-primary btn-sm chat-send" aria-label="Send"><i class="ph ph-arrow-up"></i></button>
+</main>
+
+<!-- The director: a conversation docked beside the work -->
+<aside class="dock" id="dock" aria-label="Conversation with the director">
+  <header class="dock-head" id="dock-head">
+    <span class="avatar" aria-hidden="true"><i class="ph ph-film-slate"></i></span>
+    <div class="dock-who"><strong>Director</strong><span id="dock-status">Here when you need me</span></div>
+    <button class="icon-btn dock-toggle" type="button" id="dock-toggle" aria-expanded="false" aria-label="Show the conversation"><i class="ph ph-caret-up"></i></button>
+  </header>
+  <div class="dock-scroll" id="dock-scroll">
+    <ol class="thread" id="chat-log" aria-live="polite"></ol>
+  </div>
+  <button class="jump" type="button" id="jump" hidden><i class="ph ph-arrow-down"></i> New messages</button>
+  <div class="dock-foot">
+    <section class="decide" id="decide" hidden aria-live="polite">
+      <div id="decide-pay" hidden>
+        <div class="decide-top">
+          <p class="decide-kicker" id="pay-what"></p>
+          <span class="pay-wallet" id="pay-wallet"></span>
+        </div>
+        <p class="decide-price" id="pay-price"></p>
+        <p class="decide-body">Everything included: the stills, the film, the words and your site. You see the stills before anything is filmed.</p>
+        <button class="btn btn-primary btn-block" type="button" id="pay-go"></button>
+        <button class="link-btn decide-alt" type="button" id="pay-manual-btn"><i class="ph ph-qr-code"></i> Pay from another wallet</button>
+        <form class="pay-manual" id="pay-manual" hidden>
+          <p>Send <b id="pm-amount"></b> USDC on <b>Base</b> to the studio wallet, then paste the transaction hash.</p>
+          <div class="pm-addr"><code id="pm-to"></code><button type="button" class="link-btn" id="pm-copy"><i class="ph ph-copy"></i> Copy</button></div>
+          <div class="pm-tx"><input id="pm-tx" placeholder="0x… transaction hash" autocomplete="off" spellcheck="false"><button class="btn btn-ghost btn-sm">Verify</button></div>
+        </form>
+      </div>
+      <div id="decide-film" hidden>
+        <p class="decide-kicker">Your stills are ready</p>
+        <p class="decide-body" id="film-body"></p>
+        <button class="btn btn-primary btn-block" type="button" id="film-go"></button>
+      </div>
+      <p class="decide-note" id="decide-note"></p>
+    </section>
+    <div class="suggest" id="suggest"></div>
+    <form class="composer" id="chat-form" autocomplete="off">
+      <label class="sr-only" for="chat-input">Message the director</label>
+      <textarea id="chat-input" rows="1" maxlength="2000" placeholder="Message the director"></textarea>
+      <button class="composer-send" id="chat-send" aria-label="Send"><i class="ph ph-arrow-up"></i></button>
     </form>
   </div>
-</main>
+</aside>
+</div>
+<div class="toast" id="toast" role="status" hidden></div>
 
 <!-- Guided tour -->
 <div class="tour" id="tour" hidden>
