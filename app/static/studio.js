@@ -95,6 +95,7 @@ function showScene(name) {
 function render(v, { quiet = false } = {}) {
   if (V && v.board && V.board && JSON.stringify(v.board.copy) !== JSON.stringify(V.board.copy)) copy = null; // the director changed the words
   V = v;
+  rememberFilm(v);
   renderChat();
   schedulePoll();
   store.set(SID_KEY, v.id);
@@ -449,8 +450,14 @@ async function ownerSignIn() {
 async function confirmPayment(tx) {
   say("Payment sent. Waiting for Base to confirm it.");
   for (let i = 0; i < 80; i += 1) {
-    const r = await api("/api/pay/confirm", { session: V.id, tx });
-    if (r.status !== "pending") { render(r, { quiet: true }); return; }
+    let r;
+    try { r = await api("/api/pay/confirm", { session: V.id, tx }); }
+    catch (e) {
+      if (/already been used/i.test(e.message)) forgetPayment();
+      if (/Unknown session/i.test(e.message)) return filmLost();
+      throw e;
+    }
+    if (r.status !== "pending") { forgetPayment(); render(r, { quiet: true }); return; }
     await sleep(3000);
   }
   throw new Error("Base has not confirmed the payment yet. Paste the transaction hash under 'Pay from another wallet' in a minute.");
@@ -463,9 +470,23 @@ async function payUsdc() {
   const data = `0xa9059cbb${p.to.slice(2).toLowerCase().padStart(64, "0")}${BigInt(p.amount_units).toString(16).padStart(64, "0")}`;
   say(`Approve ${usd(p.amount_usd)} USDC in your wallet.`);
   const tx = await eth.request({ method: "eth_sendTransaction", params: [{ from: wallet.address, to: p.token, data }] });
+  rememberPayment(tx, p.amount_usd);  // kept until the studio accepts it, whatever happens to this page
   ledger(`You paid ${usd(p.amount_usd)} USDC`);
   await confirmPayment(tx);
 }
+
+/* ---------------- a payment is never lost with its film ---------------- */
+// A sent payment is remembered in this browser until the studio accepts it. If the film it was for is gone,
+// the next storyboard offers to use it, and /studio?claim=<tx> hands one back.
+const UNCLAIMED_KEY = "frameline-unclaimed";
+function unclaimedPayment() {
+  try {
+    const u = JSON.parse(store.get(UNCLAIMED_KEY) || "null");
+    return u && Date.now() - u.at < 23 * 3600e3 ? u : null;  // the studio accepts a payment for 24 hours
+  } catch { return null; }
+}
+function rememberPayment(tx, amount) { store.set(UNCLAIMED_KEY, JSON.stringify({ tx, usd: amount, at: Date.now() })); }
+function forgetPayment() { store.set(UNCLAIMED_KEY, ""); }
 
 $("#pay-manual-btn").addEventListener("click", () => { $("#pay-manual").hidden = !$("#pay-manual").hidden; });
 $("#pm-copy").addEventListener("click", () => { navigator.clipboard?.writeText(V.pay.to); say("Studio wallet address copied."); });
@@ -494,7 +515,6 @@ function renderDecision() {
   $("#decide-pay").hidden = which !== "pay";
   $("#decide-film").hidden = which !== "film";
   if (which !== was) {
-    $("#decide-note").textContent = "";
     if (which) enter(card, { opacity: 0, transform: "translateY(10px)" }, { duration: 500 });
   }
   if (which === "pay") {
@@ -502,7 +522,13 @@ function renderDecision() {
     const res = V.board.resolution || V.controls?.resolution;
     $("#pay-what").textContent = `${V.board.copy.title || "Your site"} · ${n} camera moves · ${res === "1080P" ? "1080p" : "768p"}`;
     $("#pay-price").textContent = usd(V.pay.amount_usd);
-    $("#pay-go").innerHTML = !wallet.address ? `<i class="ph ph-wallet"></i> Connect a wallet to pay`
+    const waiting = unclaimedPayment();
+    const covers = waiting && (waiting.usd == null || waiting.usd + 1e-9 >= V.pay.amount_usd);
+    if (waiting && !covers) {
+      $("#decide-note").textContent = `Your ${usd(waiting.usd)} payment is waiting. It covers a smaller size; pick one at ${usd(waiting.usd)} or less to use it.`;
+    }
+    $("#pay-go").innerHTML = covers ? `<i class="ph ph-check-circle"></i> Use your ${waiting.usd == null ? "" : `${usd(waiting.usd)} `}payment`
+      : !wallet.address ? `<i class="ph ph-wallet"></i> Connect a wallet to pay`
       : wallet.owner ? `<i class="ph ph-aperture"></i> Shoot free: you own the studio`
         : `Pay ${usd(V.pay.amount_usd)} and shoot <i class="ph ph-arrow-right"></i>`;
     $("#pay-wallet").textContent = wallet.address ? `${short(wallet.address)}${wallet.owner ? " · owner" : ""}` : "";
@@ -525,7 +551,9 @@ $("#pay-go").addEventListener("click", async () => {
   const go = $("#pay-go");
   go.disabled = true;
   try {
-    if (!wallet.address) await connectWallet();
+    const waiting = unclaimedPayment();
+    if (waiting && (waiting.usd == null || waiting.usd + 1e-9 >= V.pay.amount_usd)) await confirmPayment(waiting.tx);
+    else if (!wallet.address) await connectWallet();
     else if (wallet.owner) await ownerSignIn();
     else await payUsdc();
   } catch (e) {
@@ -1182,6 +1210,7 @@ async function send(text, size = null) {
     render(v, { quiet: true });
   } catch (err) {
     pending = null;
+    if (/Unknown session/i.test(err.message)) return filmLost();
     renderChat();
     $("#chat-input").value = text;
     fitComposer();
@@ -1229,8 +1258,8 @@ new ResizeObserver(() => { if (pinned) toBottom(); }).observe($("#chat-log"));
 new ResizeObserver(([e]) => { document.body.style.setProperty("--sheet", `${Math.ceil(e.borderBoxSize[0].blockSize)}px`); }).observe($("#dock"));
 fitComposer();
 
-/* ---------------- new film ---------------- */
-$("#new-btn").addEventListener("click", async () => {
+/* ---------------- new film, another film, a film that is gone ---------------- */
+function resetView() {
   if (events) { events.close(); events = null; }
   history.replaceState(null, "", "/studio");
   $("#pitch-input").value = "";
@@ -1240,8 +1269,81 @@ $("#new-btn").addEventListener("click", async () => {
   pending = null;
   liveText = "";
   openDock(false);
+}
+
+$("#new-btn").addEventListener("click", async () => {
+  resetView();
   render(await api("/api/session", {}));
 });
+
+// The studio no longer has this film: say so plainly, start fresh, and keep any payment for the next one.
+async function filmLost() {
+  const gone = V?.id;
+  store.set(FILMS_KEY, JSON.stringify(films().filter((f) => f.id !== gone)));
+  resetView();
+  render(await api("/api/session", {}));
+  say(unclaimedPayment() ? "This film could not be found on the studio. Your payment is kept: pitch again and it pays for the new film."
+    : "This film could not be found on the studio. Pitch it again and the director starts from there.", "warn");
+}
+
+/* ---------------- your films: every film this browser made ---------------- */
+const FILMS_KEY = "frameline-films";
+const PHASE_LABEL = { pitch: "Pitch", questions: "Brief", confirm: "Brief", board: "Storyboard", shooting: "Shooting the stills",
+  keyframes: "Stills ready", filming: "Filming", deliver: "Site ready" };
+function films() { try { return JSON.parse(store.get(FILMS_KEY) || "[]"); } catch { return []; } }
+function rememberFilm(v) {
+  if (!v.pitch) return;  // nothing to come back to yet
+  const title = v.board?.copy?.title || v.brief?.name || v.pitch.slice(0, 48);
+  const list = films().filter((f) => f.id !== v.id);
+  list.unshift({ id: v.id, title, phase: v.phase, at: Date.now() });
+  store.set(FILMS_KEY, JSON.stringify(list.slice(0, 40)));
+}
+function ago(t) {
+  const m = Math.round((Date.now() - t) / 60000);
+  return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
+}
+
+function renderFilms() {
+  const box = $("#films-list");
+  box.innerHTML = "";
+  const list = films();
+  if (!list.length) box.append(li("films-none", "Films you make in this browser show up here."));
+  list.forEach((f) => {
+    const row = document.createElement("li");
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = `film-pick${f.id === V?.id ? " current" : ""}`;
+    b.innerHTML = "<strong></strong><span></span>";
+    b.querySelector("strong").textContent = f.title;
+    b.querySelector("span").textContent = `${PHASE_LABEL[f.phase] || f.phase} · ${ago(f.at)}`;
+    b.addEventListener("click", () => openFilm(f.id));
+    row.append(b);
+    box.append(row);
+  });
+}
+
+function showFilms(open) {
+  $("#films-menu").hidden = !open;
+  $("#films-btn").setAttribute("aria-expanded", String(open));
+  if (open) { renderFilms(); enter($("#films-menu"), { opacity: 0, transform: "translateY(-6px)" }, { duration: 300 }); }
+}
+
+async function openFilm(id) {
+  showFilms(false);
+  if (id === V?.id) return;
+  let v;
+  try { v = await api(`/api/session?session=${encodeURIComponent(id)}`); }
+  catch {
+    store.set(FILMS_KEY, JSON.stringify(films().filter((f) => f.id !== id)));
+    return say("That film could not be found on the studio any more.", "warn");
+  }
+  resetView();
+  render(v, { quiet: true });
+}
+
+$("#films-btn").addEventListener("click", (e) => { e.stopPropagation(); showFilms($("#films-menu").hidden); });
+document.addEventListener("click", (e) => { if (!e.target.closest("#films")) showFilms(false); });
+addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#films-menu").hidden) showFilms(false); });
 
 /* ---------------- guided tour ---------------- */
 const TOUR = [
@@ -1294,19 +1396,29 @@ addEventListener("keydown", (e) => {
 
 /* ---------------- boot: resume whatever this browser was doing ---------------- */
 (async () => {
-  api("/api/prices").then((p) => { prices = p; if (V?.phase === "confirm") updatePrice(); }).catch(() => {});
+  api("/api/prices").then((p) => { prices = p; if (V) renderSuggest(); }).catch(() => {});
+  const claim = new URLSearchParams(location.search).get("claim");
+  if (/^0x[0-9a-fA-F]{64}$/.test(claim || "")) rememberPayment(claim.toLowerCase(), null);
   let run = new URLSearchParams(location.search).get("run");
   const shared = new URLSearchParams(location.search).get("session");
   let v = null;
   try {
     if (shared) { v = await api(`/api/session?session=${encodeURIComponent(shared)}`).catch(() => null); history.replaceState(null, "", "/studio"); }
     if (!v && run) v = await api("/api/open", { run });
-    else if (!v && store.get(SID_KEY)) v = await api(`/api/session?session=${store.get(SID_KEY)}`).catch(() => null);
+    else if (!v && store.get(SID_KEY)) {
+      const last = store.get(SID_KEY);
+      v = await api(`/api/session?session=${last}`).catch(() => null);
+      if (!v) store.set(FILMS_KEY, JSON.stringify(films().filter((f) => f.id !== last)));
+    }
     v ||= await api("/api/session", {});
   } catch (e) { say(`Could not reach the studio: ${e.message}`, "warn"); return; }
   const prefill = new URLSearchParams(location.search).get("pitch");
   if (prefill && v.phase !== "pitch") v = await api("/api/session", {});
   if (prefill) { $("#pitch-input").value = prefill.slice(0, 3000); history.replaceState(null, "", "/studio"); }
   render(v, { quiet: true });
+  if (claim) {
+    history.replaceState(null, "", "/studio");
+    say("Your payment is ready. Pitch your film; once the storyboard is drafted, it pays for it.");
+  }
   if (store.get("frameline-tour-2") !== "done" && v.phase === "pitch") setTimeout(openTour, reduceMotion ? 0 : 900);
 })();

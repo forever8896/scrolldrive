@@ -37,6 +37,7 @@ import evm  # noqa: E402
 import intake  # noqa: E402
 import ledger  # noqa: E402
 import scrollsite  # noqa: E402
+import storage  # noqa: E402
 import typographer  # noqa: E402
 import venice  # noqa: E402
 import x402pay  # noqa: E402
@@ -101,6 +102,26 @@ def load_sessions():
                 SESSIONS[s["id"]] = s
             except (ValueError, KeyError, OSError):
                 pass
+
+
+# --- durable storage: what outlives the container ---------------------------------------------
+
+SYNC = storage.Syncer(ROOT, SESSIONS_DIR, CONFIGS, {"runs": RUNS, "uploads": UPLOADS}) if storage.ENABLED else None
+
+
+def restored(s):
+    """A session brought back from 1Claw memory into a new container: paths point here, nothing is running."""
+    s["refs"] = [os.path.join(UPLOADS, os.path.basename(p)) for p in s.get("refs") or []]
+    job = s.get("job")
+    if job:
+        job["log"] = os.path.join(RUNS, s.get("name") or "", os.path.basename(job.get("log") or "x.log"))
+        job["pid"] = None  # that process died with the old container
+        job["interrupted"] = True
+    a = s.get("agent")
+    if a:
+        a["busy"] = False
+        a.pop("doing", None)
+    return s
 
 
 def cfg_path(name):
@@ -243,7 +264,7 @@ def last_error(job):
     try:
         lines = open(job["log"], errors="replace").read().splitlines()
     except OSError:
-        return "the render log is missing"
+        return "the studio restarted in the middle of it" if job.get("interrupted") else "the render log is missing"
     for line in reversed(lines):
         if "Stopped:" in line:
             return customer_error(line.split("Stopped:", 1)[1].strip()[:300])
@@ -1224,6 +1245,8 @@ class Handler(BaseHTTPRequestHandler):
         return self.rfile.read(n) if n else b""
 
     def send_file(self, path):
+        if path and not os.path.isfile(path) and SYNC and SYNC.media_key(path):
+            SYNC.fetch(SYNC.media_key(path), path)  # not back from the bucket yet after a restart
         if not path or not os.path.isfile(path):
             return self.send_error(404)
         size = os.path.getsize(path)
@@ -1734,11 +1757,17 @@ def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else int(os.environ.get("PORT", 8080))
     host = os.environ.get("HOST", "127.0.0.1")
     mimetypes.add_type("video/mp4", ".mp4")
+    if SYNC:
+        print(f"storage: {SYNC.restore_state(restored)} documents restored from 1Claw memory; "
+              f"media {'in ' + storage.S3['bucket'] if storage.MEDIA else 'on this disk only (no bucket configured)'}")
     load_sessions()
     for s in SESSIONS.values():  # a restart interrupts any agent mid-thought; renders carry on
         if (s.get("agent") or {}).get("busy"):
             s["agent"]["busy"], s["agent"]["waiting"] = False, "job" if s.get("job") else "customer"
     threading.Thread(target=watcher, daemon=True).start()
+    if SYNC:
+        threading.Thread(target=SYNC.run, daemon=True).start()
+        threading.Thread(target=SYNC.restore_media, daemon=True).start()
     print(f"Frameline studio at http://{host}:{port} (payments to {PAY_TO}, {len(OWNER_WALLETS)} owner wallet(s))")
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 
