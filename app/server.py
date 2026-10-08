@@ -730,9 +730,13 @@ def film_state(s):
         st["open_questions"] = [q.get("question") for q in b.get("questions") or []][:4]
     if s.get("controls"):
         st["controls"] = s["controls"]
+    if a.get("mode") != "autopilot":  # fixed prices by size; the only numbers the director may quote
+        st["price_list_usd"] = {res: {f"{n} camera moves": usd for n, usd in t.items()}
+                                for res, t in customer_prices()["prices"].items()}
     if s.get("name") and os.path.exists(cfg_path(s["name"])):
         bv = board_view(s["name"])
         st["price_usd"] = price_usd(s)
+        st["size_now"] = {"camera_moves": len(bv["moves"]), "stills": len(bv["keyframes"]), "quality": bv["resolution"]}
         st["title"] = bv["copy"].get("title")
         st["shots"] = [{"id": k["id"], "shot": copywriter.shot_gist(k["prompt"]), "done": bool(k["url"])} for k in bv["keyframes"]]
         st["moves"] = [{"id": m["id"], "filmed": bool(m["url"])} for m in bv["moves"]]
@@ -839,14 +843,13 @@ TOOL_LABELS = {"brief": "Read the pitch", "storyboard": "Drafted the storyboard"
                "shoot": "Started shooting the stills", "film": "Started filming", "refilm": "Started refilming a move"}
 
 
-def true_prices(s, text):
-    """The model must not quote prices, but if it does, the customer only ever reads the real one."""
-    if not re.search(r"\$\s?\d", text):
-        return text
-    usd = price_usd(s) if s.get("name") and os.path.exists(cfg_path(s["name"])) else None
-    if usd is not None:
-        return re.sub(r"\$\s?\d[\d,]*(?:\.\d+)?", f"${usd:.2f}", text)
-    return " ".join(x for x in re.split(r"(?<=[.!?])\s+", text) if not re.search(r"\$\s?\d", x)) or text
+def true_prices(text):
+    """The director may quote prices, but only real ones: a sentence with any other amount is dropped."""
+    real = {v for t in customer_prices()["prices"].values() for v in t.values()}
+    def honest(sentence):
+        return all(any(abs(float(a.replace(",", "")) - v) < 0.005 for v in real)
+                   for a in re.findall(r"\$\s?(\d[\d,]*(?:\.\d+)?)", sentence))
+    return " ".join(x for x in re.split(r"(?<=[.!?])\s+", text) if honest(x))
 
 
 def agent_turn(s, trigger):
@@ -879,7 +882,7 @@ def agent_turn(s, trigger):
                 a["waiting"] = "customer"
                 return
             if d["say"]:
-                chat(s, "agent", true_prices(s, d["say"]))
+                chat(s, "agent", true_prices(d["say"]))
             if d["tool"] in ("ask", "done"):
                 a["waiting"] = "customer"
                 if d["tool"] == "done" and a.get("mode") == "autopilot":
