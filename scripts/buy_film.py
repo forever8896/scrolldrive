@@ -74,8 +74,11 @@ def main():
     if s >= 300:
         sys.exit(f"Buyer sign-in failed ({s}): {tok}")
     auth = {"Authorization": f"Bearer {tok['access_token']}"}
-    s, _, me = req("GET", f"{API}/v1/agents/{env['ONECLAW_AGENT_ID']}", headers=auth)
-    buyer_wallet = ((me.get("agent") or me).get("eth_address") or (me.get("agent") or me).get("wallet_address") or "").lower()
+    s, _, keys = req("GET", f"{API}/v1/agents/{env['ONECLAW_AGENT_ID']}/signing-keys", headers=auth)
+    evm = [k for k in (keys.get("keys") or []) if k.get("is_active") and k.get("chain") in ("ethereum", "base")]
+    buyer_wallet = (evm[0]["address"] if evm else "").lower()
+    if not buyer_wallet:
+        sys.exit("The buyer agent has no EVM signing key. Provision one: POST /v1/agents/<id>/signing-keys {\"chain\":\"ethereum\"}")
 
     step(1, "Ask Frameline for a film (no payment yet)")
     s, _, challenge = req("POST", url, ORDER)
