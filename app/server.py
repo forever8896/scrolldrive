@@ -534,10 +534,11 @@ def core_storyboard(s, controls=None, brief_edits=None, notes=""):
     base = re.sub(r"[^a-z0-9-]+", "-", str(b.get("name") or b.get("subject") or "film").lower()).strip("-")[:28]
     slug = f"{base or 'film'}-{secrets.token_hex(2)}"
     brief = intake.director_brief(s["pitch"], b, s["answers"])
+    nt = str(notes or "")[:400] or None
+    # Stage 1: a fast, text-only outline so the board (scene names and camera moves) appears in seconds.
     try:
-        director.direct(slug, brief, refs=s["refs"], ptype=controls["type"], style=controls["style"],
-                        scenes=controls["scenes"], resolution=controls["resolution"],
-                        notes=str(notes or "")[:400] or None)
+        director.outline(slug, brief, ptype=controls["type"], style=controls["style"],
+                         scenes=controls["scenes"], resolution=controls["resolution"], notes=nt)
     except SystemExit as e:
         raise Refusal(str(e)[:400], 502)
     pay = s.get("payment") or {}
@@ -546,12 +547,22 @@ def core_storyboard(s, controls=None, brief_edits=None, notes=""):
         pay["board"] = slug  # paid but nothing generated yet: the payment moves to the new storyboard
     s["name"], s["phase"], s["job"], s["error"] = slug, "board", None, None
     save(s)
+    # Stage 2: the heavy production pass (real per-shot prompts, theme, page copy). The board is already up;
+    # the customer reads the scenes while this fills in. Shooting is gated on it finishing (stage == final).
+    try:
+        director.direct(slug, brief, refs=s["refs"], ptype=controls["type"], style=controls["style"],
+                        scenes=controls["scenes"], resolution=controls["resolution"], notes=nt)
+    except SystemExit as e:
+        s["error"] = str(e)[:400]  # the outline stands and stays on screen; production can be retried
+    save(s)
 
 
 def core_start(s, stage, only=None, refilm=None):
     if not (is_paid(s) or s.get("code_ok")):
         raise Refusal("This step needs payment first.", 402, need_payment=True)
     cfg = load_cfg(s["name"])
+    if cfg.get("stage") == "outline":  # the fast outline is up but the full prompts are not ready to shoot from
+        raise Refusal("The storyboard is still being finished; try again in a moment.", 409, busy=True)
     p = prices()
     n = len(cfg["keyframes"])
     clip = p["clip_usd"][cfg["video"].get("resolution", "768P")]

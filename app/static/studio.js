@@ -1078,7 +1078,9 @@ const ACT = { brief: ["Reading your pitch", 20], storyboard: ["Composing the sho
   rewrite: ["Writing the words", 40], layout: ["Placing the words over the film", 60], set_words: ["Adjusting the words", 15],
   shoot: ["Shooting the stills", 120], film: ["Filming the camera moves", 180], reshoot: ["Reshooting a still", 60], refilm: ["Refilming a move", 90] };
 // Which phases are the "drafting" window where the left canvas is otherwise empty.
-const STAGE_PHASES = new Set(["pitch", "questions", "confirm", "brief", "board"]);
+// The stage fills the drafting window BEFORE the board exists. Once the outline lands (phase "board") the
+// real board takes over and shows the scene names and moves, even while the full prompts finish rendering.
+const STAGE_PHASES = new Set(["pitch", "questions", "confirm", "brief"]);
 let stageSay = "";
 let stageLast = 0;  // when the chat last changed, for the slow-nudge watchdog
 let stageShown = false;   // is the stage currently up (for enter/leave sounds)

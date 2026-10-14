@@ -23,7 +23,7 @@ import director  # noqa: E402
 from scrollsite import acts_from_beats  # noqa: E402
 import x402pay  # noqa: E402
 
-MODEL = "moonshotai/kimi-k2"
+MODEL = "deepseek/deepseek-v4.1-flash"  # quick and reliable JSON (kimi-k2 rejected JSON mode and often returned none)
 FALLBACK_MODEL = director.DEFAULT_MODEL
 
 SYSTEM = """You are the senior copywriter at Frameline. A visitor scrolls a one-page site; a film plays
@@ -139,9 +139,8 @@ def shot_gist(prompt):
 
 def llm(model, messages, max_tokens=2500):
     m = "openrouter/" + model if model.startswith(director.SHROUD_PROVIDER_PREFIXES) else model
-    body = {"model": m, "messages": messages, "max_tokens": max_tokens, "temperature": 0.9}
-    if model != MODEL:  # Kimi K2's providers reject JSON mode; the reply is parsed below either way
-        body["response_format"] = {"type": "json_object"}
+    body = {"model": m, "messages": messages, "max_tokens": max_tokens, "temperature": 0.9,
+            "response_format": {"type": "json_object"}}
     req = urllib.request.Request(
         director.SHROUD, data=json.dumps(body).encode(), method="POST",
         headers={**x402pay.auth_headers(), "X-Shroud-Provider": "openrouter",
