@@ -898,6 +898,16 @@ def agent_turn(s, trigger):
                 chat(s, "action", TOOL_LABELS["storyboard"], tool="storyboard", detail=result[:600])
             except Refusal as e:
                 chat(s, "action", f"Could not {TOOL_TRIES['storyboard']}", tool="storyboard", ok=False, detail=str(e)[:600])
+        # When the stills have just landed in chat, hand them straight to the customer: they are already on
+        # screen, so no one should wait through an inspection and self-reshoots to look and decide. QA stays on
+        # demand (the customer can ask "which is weakest?"); autopilot still inspects and fixes itself below.
+        last_act = next((m for m in reversed(s.get("chat") or []) if m["who"] == "action"), None)
+        if (trigger == "self" and a.get("mode") == "chat" and s.get("phase") == "keyframes" and not s.get("error")
+                and not (s.get("job") and job_state(s["job"])[0])
+                and last_act and last_act.get("tool") == "render" and last_act.get("ok")):
+            chat(s, "agent", "Your stills are in. Take a look, then film when you're happy, or tell me what to change.")
+            a["waiting"] = "customer"
+            return
         # The opening of a fresh film is deterministic: read the pitch, and when it is complete, draft the
         # storyboard straight away. The director's "decide" round-trips add nothing here but latency, so the
         # composing begins the moment the reading ends, instead of a person waiting through two extra model calls.
