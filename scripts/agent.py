@@ -17,7 +17,7 @@ import director
 import scrollsite
 import x402pay
 
-MODEL = "qwen/qwen3-max"            # quick and reliable at choosing tools
+MODEL = "deepseek/deepseek-v4.1-flash"   # quick, reliable JSON tool choice (qwen3-max deprecated 2026-10-09)
 CRITIC_MODEL = director.DEFAULT_MODEL  # sees images
 
 TOOLS = {
