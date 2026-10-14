@@ -108,17 +108,14 @@ function render(v, { quiet = false } = {}) {
   if (scene === "brief") renderBrief(changed);
   if (scene === "board") renderBoard(changed);
   if (scene === "deliver") renderDeliver(changed);
+  renderStage();
   if (v.error && !quiet) say(`That stopped: ${v.error}`, "warn");
   if (v.job?.running) follow();
 }
 
 /* ---------------- 1. pitch ---------------- */
 function renderPitch(changed) {
-  if (V.agent?.busy) {  // the director is reading the pitch
-    if ($("#reading").hidden) { $(".pitch").hidden = true; showReading(V.pitch || ""); }
-    return;
-  }
-  stopReading();
+  if (V.agent?.busy) { $(".pitch").hidden = true; return; }  // the stage takes over while the director works
   $("#reading").hidden = true;
   $(".pitch").hidden = false;
   $(".pitch").getAnimations().forEach((a) => a.cancel());
@@ -1066,9 +1063,83 @@ function buildThread(log, msgs, firstNew, open) {
 }
 
 // The slow steps, said plainly, with how long they usually take.
-const DOING = { brief: ["Reading your pitch", 40], storyboard: ["Drawing the storyboard", 90], inspect: ["Checking every still", 60],
+const DOING = { brief: ["Reading your pitch", 20], storyboard: ["Drawing the storyboard", 90], inspect: ["Checking every still", 60],
   rewrite: ["Rewriting the words", 40], layout: ["Laying out the words over the film", 60], set_words: ["Changing the words", 15] };
 const clockOf = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+
+/* ---------------- the director's stage: its live work, on the canvas ---------------- */
+// Present-tense name for each act, and how long it usually takes (seconds).
+const ACT = { brief: ["Reading your pitch", 20], storyboard: ["Composing the shots", 90], inspect: ["Looking over every still", 60],
+  rewrite: ["Writing the words", 40], layout: ["Placing the words over the film", 60], set_words: ["Adjusting the words", 15],
+  shoot: ["Shooting the stills", 120], film: ["Filming the camera moves", 180], reshoot: ["Reshooting a still", 60], refilm: ["Refilming a move", 90] };
+// Which phases are the "drafting" window where the left canvas is otherwise empty.
+const STAGE_PHASES = new Set(["pitch", "questions", "confirm", "brief", "board"]);
+let stageSay = "";
+let stageLast = 0;  // when the chat last changed, for the slow-nudge watchdog
+
+function renderStage() {
+  const stage = $("#stage");
+  const a = V?.agent || {};
+  const show = a.busy && !(V.job && V.job.running) && STAGE_PHASES.has(V.phase);
+  document.body.classList.toggle("staging", show);
+  if (!show) { stage.hidden = true; return; }
+  if (stage.hidden) { stage.hidden = false; enter(stage, { opacity: 0, transform: "translateY(10px)" }, { duration: 500 }); stageSay = ""; }
+
+  const tool = a.doing?.tool;
+  const [actLabel, usual] = (tool && ACT[tool]) || (V.phase === "board" ? ["Composing the shots", 90] : ["Reading your pitch", 20]);
+  $("#stage-act").textContent = actLabel;
+
+  // The director's own latest words = the big line. Falls back to the act.
+  const lastAgent = [...(V.chat || [])].reverse().find((m) => m.who === "agent");
+  const line = (lastAgent?.text || actLabel).replace(/\s+/g, " ").trim();
+  if (line !== stageSay) { stageSay = line; kinetic($("#stage-say"), line); }
+
+  // Elapsed and expectation.
+  const t = a.doing ? (a.doing.for_s || 0) + Math.round((Date.now() - (a.doing.seenAt || Date.now())) / 1000) : 0;
+  const slow = t > usual * 1.4;
+  $("#stage-meta").textContent = a.doing
+    ? (slow ? `${clockOf(t)} · taking longer than usual` : `${clockOf(t)} · usually ${usual < 60 ? `about ${usual} seconds` : "a minute or two"}`)
+    : "just a moment";
+
+  // The trail of real steps taken this film, most recent last, with the current one in progress.
+  const trail = $("#stage-trail");
+  const steps = (V.chat || []).filter((m) => m.who === "action" && m.ok !== false && STAGE_TRAIL.has(m.tool));
+  const sig = steps.map((m) => m.at).join(",") + "|" + (tool || "");
+  if (trail.dataset.sig !== sig) {
+    trail.dataset.sig = sig;
+    trail.innerHTML = "";
+    steps.slice(-5).forEach((m) => {
+      const el = document.createElement("li");
+      el.className = "done";
+      el.innerHTML = `<i class="ph ph-check"></i><span></span>`;
+      el.querySelector("span").textContent = m.text;
+      trail.append(el);
+    });
+    if (tool && ACT[tool]) {
+      const el = document.createElement("li");
+      el.className = "now";
+      el.innerHTML = `<i class="ph ph-circle-notch spin"></i><span></span>`;
+      el.querySelector("span").textContent = actLabel;
+      trail.append(el);
+    }
+  }
+
+  // Watchdog: only if it has been quiet far too long, offer a gentle nudge rather than an endless wait.
+  const lastAt = (V.chat || []).at(-1)?.at || 0;
+  if (lastAt !== stageLast) { stageLast = lastAt; }
+  const quietFor = a.doing ? t : 0;
+  const stuck = quietFor > Math.max(usual * 3, 180);
+  $("#stage-nudge").hidden = !stuck;
+}
+
+$("#stage-nudge-btn").addEventListener("click", async () => {
+  $("#stage-nudge-btn").disabled = true;
+  try { render(await api(`/api/session?session=${V.id}`), { quiet: true }); } catch { /* keep the stage */ }
+  $("#stage-nudge-btn").disabled = false;
+});
+
+// Steps worth showing in the stage trail (skip tiny housekeeping).
+const STAGE_TRAIL = new Set(["brief", "storyboard", "inspect", "reshoot", "rewrite", "layout", "set_words", "shoot", "film", "refilm"]);
 
 // The last row: the director typing, a slow step it is in, or the camera at work.
 function renderLive() {
@@ -1163,7 +1234,7 @@ let liveTick = null;
 function renderChat() {
   if (V.agent?.doing) V.agent.doing.seenAt ??= Date.now();
   clearInterval(liveTick);
-  if (V.agent?.doing) liveTick = setInterval(renderLive, 1000);
+  if (V.agent?.doing) liveTick = setInterval(() => { renderLive(); renderStage(); }, 1000);
   const msgs = V.chat || [];
   const busy = Boolean(V.agent?.busy);
   document.body.classList.toggle("dock-off", V.phase === "pitch" && !msgs.length && !busy && !pending);

@@ -45,6 +45,20 @@
   <div class="light" aria-hidden="true"></div>
   <div class="bignum" id="bignum" aria-hidden="true"></div>
 
+  <!-- The director's stage: what it is doing right now, while it works -->
+  <section class="stage" id="stage" hidden aria-live="polite">
+    <div class="stage-inner">
+      <p class="eyebrow stage-act"><span class="stage-pulse" aria-hidden="true"></span><span id="stage-act">Working</span></p>
+      <p class="stage-say kinetic" id="stage-say"></p>
+      <p class="stage-meta" id="stage-meta"></p>
+      <ol class="stage-trail" id="stage-trail"></ol>
+      <div class="stage-nudge" id="stage-nudge" hidden>
+        <span id="stage-nudge-text">This is taking longer than usual.</span>
+        <button class="btn btn-ghost btn-sm" type="button" id="stage-nudge-btn">Nudge the director</button>
+      </div>
+    </div>
+  </section>
+
   <!-- 1. Pitch -->
   <section class="scene" data-scene="pitch" hidden>
     <div class="pitch">

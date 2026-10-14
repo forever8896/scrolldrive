@@ -73,7 +73,8 @@ def ask(text, images=()):
     for i, p in enumerate(images, 1):
         content.append({"type": "text", "text": f"Image {i}:"})
         content.append({"type": "image_url", "image_url": {"url": director.image_url(p)}})
-    body = {"model": MODEL, "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content}],
+    model = MODEL if images else "deepseek/deepseek-v4.1-flash"  # vision only matters when images are attached
+    body = {"model": model, "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content}],
             "response_format": {"type": "json_object"}, "max_tokens": 3000, "temperature": 0.4}
     last = None
     for _ in range(2):

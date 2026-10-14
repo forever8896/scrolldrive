@@ -467,3 +467,27 @@ body.agent-working #pitch-go { opacity: 0.5; pointer-events: none; }
 .film-pick.current { background: var(--accent-soft); }
 .film-pick.current span::after { content: " · open now"; color: var(--accent); }
 .films-none { padding: 0.6rem 0.7rem 0.8rem; font-size: 0.84rem; color: var(--text-3); }
+
+/* ---------------- the director's stage: its live work, on the canvas ---------------- */
+.stage {
+  position: absolute; inset: 0; z-index: 8; display: flex; flex-direction: column; justify-content: center;
+  padding: clamp(20px, 3.4vw, 48px) clamp(16px, 3.6vw, 56px);
+  background: radial-gradient(60% 50% at 30% 40%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 70%), var(--bg);
+}
+.stage-inner { width: min(100%, 820px); margin: auto 0; }
+.stage-act { display: inline-flex; align-items: center; gap: 0.5rem; }
+.stage-pulse { width: 8px; height: 8px; border-radius: 99px; background: var(--accent); box-shadow: 0 0 0 0 var(--accent-soft); animation: stage-pulse 1.6s var(--ease) infinite; }
+@keyframes stage-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent); } 70%, 100% { box-shadow: 0 0 0 10px transparent; } }
+.stage-say { margin-top: 1rem; font-size: clamp(1.5rem, 3vw, 2.5rem); line-height: 1.12; min-height: 1.2em; max-width: 20ch; }
+.stage-meta { margin-top: 1rem; font: 500 0.82rem/1 "Geist Mono", monospace; color: var(--text-3); }
+.stage-trail { list-style: none; margin: 2rem 0 0; padding: 0; display: grid; gap: 0.5rem; }
+.stage-trail li { display: flex; align-items: center; gap: 0.6rem; font-size: 0.92rem; color: var(--text-2); }
+.stage-trail li i { font-size: 1rem; }
+.stage-trail li.done i { color: var(--ok, #7fcf96); }
+.stage-trail li.now { color: var(--text); }
+.stage-trail li.now i { color: var(--accent); }
+.stage-nudge { margin-top: 1.6rem; display: flex; align-items: center; gap: 0.8rem; font-size: 0.86rem; color: var(--text-3); }
+.spin { animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+/* While the stage is up, the dock stays available but the pitch box is gone (handled in JS). */
+@media (prefers-reduced-motion: reduce) { .stage-pulse, .spin { animation: none; } }
