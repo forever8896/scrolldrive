@@ -487,7 +487,74 @@ body.agent-working #pitch-go { opacity: 0.5; pointer-events: none; }
 .stage-trail li.now { color: var(--text); }
 .stage-trail li.now i { color: var(--accent); }
 .stage-nudge { margin-top: 1.6rem; display: flex; align-items: center; gap: 0.8rem; font-size: 0.86rem; color: var(--text-3); }
+
+/* A slow light leak drifts across the set, so the stage is never quite still. */
+.stage::after {
+  content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: radial-gradient(38% 42% at 32% 34%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 72%);
+  animation: stage-drift 15s ease-in-out infinite alternate;
+}
+@keyframes stage-drift { from { transform: translate(-4%, -2%) scale(1); } to { transform: translate(6%, 4%) scale(1.12); } }
+
+/* Sound toggle, tucked in the corner. */
+.stage-sound { position: absolute; top: clamp(16px, 2.4vw, 28px); right: clamp(16px, 3vw, 40px); z-index: 3; }
+.stage-sound.off { opacity: 0.55; }
+
+/* The user's reference, treated like film while the director works it. */
+body.has-film .stage { flex-direction: row; align-items: center; gap: clamp(20px, 3vw, 48px); }
+body.has-film .stage-inner { width: min(46%, 560px); margin: 0; }
+.stage-film {
+  position: relative; flex: 1 1 0; align-self: center; aspect-ratio: 4 / 5; max-height: 74vh;
+  border-radius: 14px; overflow: hidden; background: #0b0b0d;
+  box-shadow: 0 30px 80px -42px rgba(0, 0, 0, 0.8), inset 0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.film-frame { position: absolute; inset: 0; }
+.film-img {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0;
+  transition: opacity 1.2s var(--ease); transform-origin: 50% 40%;
+  animation: kenburns 20s ease-in-out infinite alternate;
+}
+.film-img.on { opacity: 1; }
+@keyframes kenburns { from { transform: scale(1.04) translate(0, 0); } to { transform: scale(1.15) translate(-2.5%, -2.5%); } }
+.film-vignette { position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(72% 72% at 50% 44%, transparent 54%, rgba(0, 0, 0, 0.55)); }
+.film-grain {
+  position: absolute; inset: -60%; pointer-events: none; opacity: 0.07; mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  animation: grain 1.1s steps(3) infinite;
+}
+@keyframes grain { 0% { transform: translate(0, 0); } 33% { transform: translate(-6%, 4%); } 66% { transform: translate(4%, -5%); } 100% { transform: translate(-3%, 3%); } }
+/* 'reading' — a scan line sweeps the image, which sits half-desaturated until it is understood. */
+.film-scan { position: absolute; left: 0; right: 0; top: 0; height: 32%; pointer-events: none; opacity: 0;
+  background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--accent) 34%, transparent) 50%, transparent); }
+.stage-film.act-brief .film-img { filter: grayscale(0.45) contrast(1.05); }
+.stage-film.act-brief .film-scan { opacity: 1; animation: film-scan 2.8s var(--ease) infinite; }
+@keyframes film-scan { 0% { transform: translateY(-120%); } 100% { transform: translateY(360%); } }
+/* 'framing' — a rule-of-thirds grid and a focus reticle breathe as the camera finds the shot. */
+.film-guides { position: absolute; inset: 9%; pointer-events: none; opacity: 0; transform-origin: 50% 45%;
+  transition: opacity 0.5s var(--ease); border: 1.5px solid color-mix(in srgb, var(--accent) 55%, transparent); border-radius: 2px; }
+.stage-film.act-board .film-guides { opacity: 0.8; animation: reframe 5.5s var(--ease) infinite alternate; }
+@keyframes reframe { from { transform: scale(1.07); } to { transform: scale(0.93); } }
+.film-guides::before { content: ""; position: absolute; inset: 0;
+  background:
+    linear-gradient(to right, transparent calc(33.33% - 0.5px), color-mix(in srgb, var(--accent) 45%, transparent) 33.33%, transparent calc(33.33% + 0.5px)),
+    linear-gradient(to right, transparent calc(66.66% - 0.5px), color-mix(in srgb, var(--accent) 45%, transparent) 66.66%, transparent calc(66.66% + 0.5px)),
+    linear-gradient(to bottom, transparent calc(33.33% - 0.5px), color-mix(in srgb, var(--accent) 45%, transparent) 33.33%, transparent calc(33.33% + 0.5px)),
+    linear-gradient(to bottom, transparent calc(66.66% - 0.5px), color-mix(in srgb, var(--accent) 45%, transparent) 66.66%, transparent calc(66.66% + 0.5px)); }
+.film-guides::after { content: ""; position: absolute; left: 50%; top: 45%; width: 20px; height: 20px; transform: translate(-50%, -50%); opacity: 0.85;
+  background: linear-gradient(var(--accent), var(--accent)) center / 1.5px 100% no-repeat, linear-gradient(var(--accent), var(--accent)) center / 100% 1.5px no-repeat; }
+.film-tag { position: absolute; left: 12px; bottom: 11px; z-index: 2; font: 500 0.7rem/1 "Geist Mono", monospace; letter-spacing: 0.08em;
+  text-transform: uppercase; color: #fff; padding: 4px 8px; border-radius: 6px; background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(4px); }
+.film-tag:empty { display: none; }
+@media (max-width: 760px) {
+  body.has-film .stage { flex-direction: column; justify-content: center; }
+  body.has-film .stage-inner { width: 100%; }
+  .stage-film { width: 100%; flex: 0 0 auto; aspect-ratio: 16 / 10; max-height: 36vh; }
+}
+
 .spin { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 /* While the stage is up, the dock stays available but the pitch box is gone (handled in JS). */
-@media (prefers-reduced-motion: reduce) { .stage-pulse, .spin { animation: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .stage-pulse, .spin, .stage::after, .film-img, .film-grain, .film-scan, .film-guides { animation: none; }
+}

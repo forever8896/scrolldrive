@@ -47,6 +47,7 @@
 
   <!-- The director's stage: what it is doing right now, while it works -->
   <section class="stage" id="stage" hidden aria-live="polite">
+    <button class="icon-btn stage-sound" type="button" id="stage-sound" aria-label="Mute studio sound"><i class="ph ph-speaker-high"></i></button>
     <div class="stage-inner">
       <p class="eyebrow stage-act"><span class="stage-pulse" aria-hidden="true"></span><span id="stage-act">Working</span></p>
       <p class="stage-say kinetic" id="stage-say"></p>
@@ -56,6 +57,15 @@
         <span id="stage-nudge-text">This is taking longer than usual.</span>
         <button class="btn btn-ghost btn-sm" type="button" id="stage-nudge-btn">Nudge the director</button>
       </div>
+    </div>
+    <!-- The user's own reference, alive under the current act: read, then framed. -->
+    <div class="stage-film" id="stage-film" hidden aria-hidden="true">
+      <div class="film-frame" id="film-frame"></div>
+      <div class="film-guides" aria-hidden="true"></div>
+      <div class="film-scan" aria-hidden="true"></div>
+      <div class="film-grain" aria-hidden="true"></div>
+      <div class="film-vignette" aria-hidden="true"></div>
+      <span class="film-tag" id="film-tag"></span>
     </div>
   </section>
 

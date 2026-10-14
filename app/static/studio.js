@@ -1076,22 +1076,150 @@ const ACT = { brief: ["Reading your pitch", 20], storyboard: ["Composing the sho
 const STAGE_PHASES = new Set(["pitch", "questions", "confirm", "brief", "board"]);
 let stageSay = "";
 let stageLast = 0;  // when the chat last changed, for the slow-nudge watchdog
+let stageShown = false;   // is the stage currently up (for enter/leave sounds)
+let stageSteps = -1;      // completed-step count last seen (-1 = not initialised, don't sound)
+let filmIdx = 0, filmAt = 0;  // which reference is showing, and since when
+
+/* ---------------- studio sound: a quiet film set, synthesised, no files ---------------- */
+// Diegetic: a shutter on each real step, a soft projector whir while working, a chime when it lands.
+// Created only on a user gesture (autoplay rules); off is remembered; the volume stays low on purpose.
+const VOL = 0.22;
+let audio = null;
+let soundOn = store.get("frameline-sound") !== "off";
+function ensureAudio() {
+  if (audio || !soundOn) return audio;
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new Ctx();
+    const master = ctx.createGain();
+    master.gain.value = VOL;
+    master.connect(ctx.destination);
+    audio = { ctx, master, whir: null };
+  } catch { audio = null; }
+  return audio;
+}
+function wakeAudio() {
+  if (!soundOn) return;
+  const a = ensureAudio();
+  if (a && a.ctx.state === "suspended") a.ctx.resume().catch(() => {});
+}
+addEventListener("pointerdown", wakeAudio);
+addEventListener("keydown", wakeAudio);
+
+function noiseBurst(dur, freq, q, gain) {
+  const a = audio; if (!a) return;
+  const { ctx, master } = a, n = Math.floor(ctx.sampleRate * dur), buf = ctx.createBuffer(1, n, ctx.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+  const src = ctx.createBufferSource(); src.buffer = buf;
+  const bp = ctx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = freq; bp.Q.value = q;
+  const g = ctx.createGain(), t = ctx.currentTime;
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(gain, t + 0.002); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  src.connect(bp); bp.connect(g); g.connect(master); src.start(t); src.stop(t + dur);
+}
+function shutter() {         // mirror up, then the softer slap down — a mechanical SLR click
+  if (!ensureAudio() || !soundOn) return;
+  noiseBurst(0.04, 2600, 1.4, 0.55);
+  setTimeout(() => noiseBurst(0.06, 1400, 1.1, 0.4), 65);
+}
+function chime() {           // two clean tones: the storyboard has landed
+  const a = ensureAudio(); if (!a || !soundOn) return;
+  [880, 1320].forEach((f, i) => {
+    const o = a.ctx.createOscillator(), g = a.ctx.createGain(), t = a.ctx.currentTime + i * 0.09;
+    o.type = "sine"; o.frequency.value = f;
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.16, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+    o.connect(g); g.connect(a.master); o.start(t); o.stop(t + 0.55);
+  });
+}
+function whirOn() {           // a brown-noise projector loop with a gentle sprocket wobble, very low
+  const a = ensureAudio(); if (!a || !soundOn || a.whir || reduceMotion) return;
+  const { ctx, master } = a, dur = 1.3, n = Math.floor(ctx.sampleRate * dur), buf = ctx.createBuffer(1, n, ctx.sampleRate), d = buf.getChannelData(0);
+  let last = 0;
+  for (let i = 0; i < n; i++) { const w = Math.random() * 2 - 1; last = (last + 0.02 * w) / 1.02; d[i] = last * 3.2; }
+  const src = ctx.createBufferSource(); src.buffer = buf; src.loop = true;
+  const lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 440;
+  const g = ctx.createGain(); g.gain.value = 0;
+  const lfo = ctx.createOscillator(); lfo.frequency.value = 7.5;
+  const lfoG = ctx.createGain(); lfoG.gain.value = 0.016; lfo.connect(lfoG); lfoG.connect(g.gain);
+  src.connect(lp); lp.connect(g); g.connect(master);
+  const t = ctx.currentTime; g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.055, t + 0.4);
+  src.start(); lfo.start();
+  a.whir = { src, g, lfo };
+}
+function whirOff() {
+  const a = audio; if (!a || !a.whir) return;
+  const { src, g, lfo } = a.whir; a.whir = null;
+  try {
+    const t = a.ctx.currentTime;
+    g.gain.cancelScheduledValues(t); g.gain.setValueAtTime(g.gain.value, t); g.gain.linearRampToValueAtTime(0, t + 0.5);
+    src.stop(t + 0.55); lfo.stop(t + 0.55);
+  } catch { /* already stopped */ }
+}
+function syncSoundBtn() {
+  const btn = $("#stage-sound"); if (!btn) return;
+  btn.querySelector("i").className = soundOn ? "ph ph-speaker-high" : "ph ph-speaker-slash";
+  btn.setAttribute("aria-label", soundOn ? "Mute studio sound" : "Unmute studio sound");
+  btn.classList.toggle("off", !soundOn);
+}
+$("#stage-sound").addEventListener("click", () => {
+  soundOn = !soundOn;
+  store.set("frameline-sound", soundOn ? "on" : "off");
+  if (soundOn) { wakeAudio(); const a = audio; if (a) a.master.gain.setTargetAtTime(VOL, a.ctx.currentTime, 0.05); }
+  else { if (audio) audio.master.gain.setTargetAtTime(0, audio.ctx.currentTime, 0.05); whirOff(); }
+  syncSoundBtn();
+});
+syncSoundBtn();
 
 function renderStage() {
   const stage = $("#stage");
   const a = V?.agent || {};
   const show = a.busy && !(V.job && V.job.running) && STAGE_PHASES.has(V.phase);
   document.body.classList.toggle("staging", show);
-  if (!show) { stage.hidden = true; return; }
+  if (!show) {
+    if (stageShown) { stageShown = false; whirOff(); if (V.phase === "board" && !V.pay?.paid) chime(); }
+    stageSteps = -1; stage.hidden = true; document.body.classList.remove("has-film");
+    return;
+  }
   if (stage.hidden) { stage.hidden = false; enter(stage, { opacity: 0, transform: "translateY(10px)" }, { duration: 500 }); stageSay = ""; }
+  stageShown = true;
 
   const tool = a.doing?.tool;
   const [actLabel, usual] = (tool && ACT[tool]) || (V.phase === "board" ? ["Composing the shots", 90] : ["Reading your pitch", 20]);
   $("#stage-act").textContent = actLabel;
 
-  // The director's own latest words = the big line. Falls back to the act.
-  const lastAgent = [...(V.chat || [])].reverse().find((m) => m.who === "agent");
-  const line = (lastAgent?.text || actLabel).replace(/\s+/g, " ").trim();
+  // The projector runs while the director is in a step; it winds down between them.
+  if (a.doing) whirOn(); else whirOff();
+
+  // The user's own reference, alive under the current act: scanned while read, framed while composed.
+  const film = $("#stage-film"), refs = V.refs || [];
+  document.body.classList.toggle("has-film", refs.length > 0);
+  if (refs.length) {
+    film.hidden = false;
+    if (film.dataset.sig !== refs.join("|")) {
+      film.dataset.sig = refs.join("|");
+      const frame = $("#film-frame"); frame.innerHTML = "";
+      refs.forEach((u, i) => { const im = new Image(); im.src = u; im.alt = ""; im.className = "film-img" + (i ? "" : " on"); frame.append(im); });
+      filmIdx = 0; filmAt = Date.now();
+    }
+    const imgs = $("#film-frame").children;   // flip through the contact sheet, slowly
+    if (imgs.length > 1 && Date.now() - filmAt > 4500) {
+      imgs[filmIdx].classList.remove("on");
+      filmIdx = (filmIdx + 1) % imgs.length;
+      imgs[filmIdx].classList.add("on");
+      filmAt = Date.now();
+    }
+    const act = tool === "brief" ? "act-brief" : (tool === "storyboard" || V.phase === "board") ? "act-board" : "act-idle";
+    if (!film.classList.contains(act)) { film.classList.remove("act-brief", "act-board", "act-idle"); film.classList.add(act); }
+    $("#film-tag").textContent = act === "act-brief" ? "reading" : act === "act-board" ? "framing" : "";
+  } else { film.hidden = true; }
+
+  // The director's own latest words are the big line — but only while they are still the latest word.
+  // Once the customer has spoken since (an edit, a redirect), that line describes the previous step; the
+  // director is now acting on the new request, so the present-tense act carries the stage until it speaks again.
+  const chat = V.chat || [];
+  const lastAgent = [...chat].reverse().find((m) => m.who === "agent");
+  const lastYou = [...chat].reverse().find((m) => m.who === "you");
+  const fresh = lastAgent && !(lastYou && (lastYou.at || 0) >= (lastAgent.at || 0));
+  const line = ((fresh ? lastAgent.text : actLabel) || actLabel).replace(/\s+/g, " ").trim();
   if (line !== stageSay) { stageSay = line; kinetic($("#stage-say"), line); }
 
   // Elapsed and expectation.
@@ -1104,6 +1232,9 @@ function renderStage() {
   // The trail of real steps taken this film, most recent last, with the current one in progress.
   const trail = $("#stage-trail");
   const steps = (V.chat || []).filter((m) => m.who === "action" && m.ok !== false && STAGE_TRAIL.has(m.tool));
+  // A shutter click each time a real step lands (but never retro-fire on a resumed session).
+  if (stageSteps < 0) stageSteps = steps.length;
+  else if (steps.length > stageSteps) { shutter(); stageSteps = steps.length; }
   const sig = steps.map((m) => m.at).join(",") + "|" + (tool || "");
   if (trail.dataset.sig !== sig) {
     trail.dataset.sig = sig;
