@@ -293,7 +293,12 @@ function setMedia(frame, state, url) {
   media.className = `media ${state}`;
   if (state === "planned") {
     const still = frame.classList.contains("still");
-    media.innerHTML = `<i class="ph ${still ? "ph-aperture" : "ph-film-slate"}"></i><span>${still ? "Shot once paid" : "Filmed after you see the stills"}</span>`;
+    const id = frame.dataset.id || "";
+    media.innerHTML = still
+      ? `<span class="plate-no" aria-hidden="true">${id}</span>`
+        + `<span class="plate-badge"><i class="ph ph-aperture"></i> shoots when you pay</span>`
+      : `<span class="plate-move" aria-hidden="true"><i class="ph ph-arrow-right"></i></span>`
+        + `<span class="plate-badge"><i class="ph ph-film-slate"></i> films after the stills</span>`;
   } else if (state === "pending") {
     media.innerHTML = "";
   } else if (state === "working") {

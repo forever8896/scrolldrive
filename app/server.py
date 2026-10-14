@@ -887,6 +887,36 @@ def agent_turn(s, trigger):
                 chat(s, "action", TOOL_LABELS["storyboard"], tool="storyboard", detail=result[:600])
             except Refusal as e:
                 chat(s, "action", f"Could not {TOOL_TRIES['storyboard']}", tool="storyboard", ok=False, detail=str(e)[:600])
+        # The opening of a fresh film is deterministic: read the pitch, and when it is complete, draft the
+        # storyboard straight away. The director's "decide" round-trips add nothing here but latency, so the
+        # composing begins the moment the reading ends, instead of a person waiting through two extra model calls.
+        if (trigger == "customer" and a.get("mode") == "chat" and not s.get("brief")
+                and s.get("phase") in ("pitch", "questions", "confirm") and str(s.get("pitch") or "").strip()):
+            a["steps"] = a.get("steps", 0) + 1
+            a["doing"] = {"tool": "brief", "since": time.time()}
+            save(s)
+            try:
+                run_tool(s, "brief", {"pitch": s.get("pitch")})
+                chat(s, "action", TOOL_LABELS["brief"], tool="brief")
+            except Refusal:
+                a.pop("doing", None)  # a thin or unusual pitch: let the model-driven loop handle it below
+            else:
+                b = s.get("brief") or {}
+                if not b.get("questions"):   # a complete pitch needs no questions -> compose now
+                    subj = (b.get("subject") or b.get("name") or "").strip()[:80].rstrip(".")
+                    n = (s.get("controls") or {}).get("scenes") or b.get("scenes") or 3
+                    chat(s, "agent", (f"{subj}. " if subj else "") + f"Composing {n} camera moves now.")
+                    a["steps"] = a.get("steps", 0) + 1
+                    a["doing"] = {"tool": "storyboard", "since": time.time()}
+                    save(s)
+                    try:
+                        run_tool(s, "storyboard", {})
+                        chat(s, "action", TOOL_LABELS["storyboard"], tool="storyboard")
+                    except Refusal as e:
+                        chat(s, "action", f"Could not {TOOL_TRIES['storyboard']}", tool="storyboard", ok=False, detail=str(e)[:600])
+                    a.pop("doing", None)
+                    save(s)
+            # fall through: the normal loop now recaps the storyboard (or asks the open questions) in the director's voice
         for _ in range(AGENT_STEPS_PER_TURN):
             if a.get("steps", 0) >= AGENT_STEPS_PER_FILM:
                 chat(s, "agent", "I have done a lot of work on this film already; tell me what to change next.")
