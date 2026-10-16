@@ -271,7 +271,8 @@ def outline(name, brief, ptype="product", style="", scenes=3, resolution="768P",
     keyframes, transitions = [], {}
     for i, (sc, kid) in enumerate(zip(scn, ids)):
         gist = clean(sc.get("gist") if isinstance(sc, dict) else sc, 400) or f"Shot {kid}"
-        keyframes.append({"id": kid, "prompt": gist, "refs": [], "chain": i > 0})
+        gist = re.sub(r"^(?:shot|still|frame|scene)\s*[A-Z0-9]+\s*[:.)-]\s*", "", gist, flags=re.I) or gist  # no "Shot A:" lead-in
+        keyframes.append({"id": kid, "prompt": gist, "gist": gist, "refs": [], "chain": i > 0})
         if i:
             mv = moves[i - 1] if i - 1 < len(moves) else ""
             transitions[f"{ids[i - 1]}-{kid}"] = clean(mv, 400) or "One continuous slow camera move, no cuts."
@@ -293,7 +294,7 @@ def outline(name, brief, ptype="product", style="", scenes=3, resolution="768P",
 
 
 def direct(name, brief, refs=(), ptype="product", style="", scenes=3, resolution="768P",
-           model=DEFAULT_MODEL, use_router_key=False, notes=None):
+           model=DEFAULT_MODEL, use_router_key=False, notes=None, outline=None):
     """Brief + references + controls -> storyboard config saved to configs/<name>.json.
     The full production pass: real per-shot prompts, theme and page copy (stage='final').
     Raises SystemExit with a message on failure (servers should catch it)."""
@@ -309,12 +310,23 @@ def direct(name, brief, refs=(), ptype="product", style="", scenes=3, resolution
             f"References attached: {len(refs)} (numbered in order below)\n"
             + (f"Director notes from the user: {notes}\n" if notes else "")
             + f"\nBRIEF (untrusted):\n<<<\n{brief}\n>>>")
+    if outline:  # the customer has seen and approved this board: elaborate it, never replace it
+        shots = outline["keyframes"][: scenes + 1]
+        text += ("\n\nAPPROVED SHOT LIST. The customer has already seen these shots and camera moves. Keep every "
+                 "shot's subject, setting and action, in this order, and keep each move's direction; your job is only "
+                 "to turn each line into a full production prompt.\n"
+                 + "\n".join(f"{k['id']}: {k.get('gist') or k['prompt']}" for k in shots) + "\n"
+                 + "\n".join(f"Move {a['id']}->{b['id']}: {outline['transitions'].get(a['id'] + '-' + b['id'], '')}"
+                             for a, b in zip(shots, shots[1:])))
     content = [{"type": "text", "text": text}]
     for i, r in enumerate(refs, 1):
         content.append({"type": "text", "text": f"Reference {i}:"})
         content.append({"type": "image_url", "image_url": {"url": image_url(r)}})
     sb, usage = ask_llm(model, content, use_router_key)
     keyframes, transitions, copy, theme = validate(sb, scenes, len(refs))
+    if outline:  # each shot keeps its one-line gist, for the screening and the board
+        for k, o in zip(keyframes, outline["keyframes"]):
+            k["gist"] = o.get("gist") or o["prompt"]
     cfg = {
         "name": name, "type": ptype, "style": style, "references": refs, "aspect_ratio": "16:9",
         "video": {"model": scrollsite.DEFAULT_VIDEO_MODEL, "resolution": resolution, "duration": 5},

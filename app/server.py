@@ -25,6 +25,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP = os.path.dirname(os.path.abspath(__file__))
@@ -317,7 +318,10 @@ def board_view(name):
     for k in cfg["keyframes"]:
         path = scrollsite.keyframe_path(rd, k["id"]) if os.path.isdir(rd) else None
         mt[k["id"]] = os.path.getmtime(path) if path else None
-        kfs.append({**k, "url": f"{run_url(path)}?v={int(mt[k['id']])}" if path else None})
+        sk = os.path.join(rd, f"sketch-{k['id']}.webp")
+        kfs.append({**k, "url": f"{run_url(path)}?v={int(mt[k['id']])}" if path else None,
+                    "gist": k.get("gist") or copywriter.shot_gist(k["prompt"]),
+                    "sketch": f"{run_url(sk)}?v={int(os.path.getmtime(sk))}" if os.path.exists(sk) else None})
     try:
         joins = {j["clip"].replace("->", "-"): j for j in json.load(open(os.path.join(rd, "report.json"))).get("joins", [])}
     except (OSError, ValueError):
@@ -383,6 +387,8 @@ def view(s):
     a = s.get("agent") or {}
     out["chat"] = [{k: m.get(k) for k in ("who", "text", "at", "tool", "ok", "detail")} for m in (s.get("chat") or [])[-80:]]
     out["media_lost"] = media_lost(s)
+    out["drafting"] = storyboard_finishing(s)        # the production pass is still running behind the board
+    out["sketching"] = s.get("name") in SKETCHING    # sketches still on their way
     out["agent"] = {"busy": bool(a.get("busy")), "waiting": a.get("waiting"), "mode": a.get("mode", "chat"),
                     "inspection": a.get("inspection"),
                     "doing": ({**a["doing"], "for_s": round(time.time() - a["doing"]["since"])} if a.get("doing") else None)}
@@ -581,12 +587,55 @@ def core_storyboard(s, controls=None, brief_edits=None, notes=""):
     # the price is on screen while it works. Shooting waits for it; a payment made meanwhile starts the stills
     # the moment it is done.
     threading.Thread(target=finish_storyboard, args=(s, slug, brief, controls, nt), daemon=True).start()
+    if agent_of(s).get("mode") != "autopilot":  # a person watches the screening; an ordering agent does not
+        threading.Thread(target=sketch_board, args=(slug, s.get("brief") or {}), daemon=True).start()
+
+
+SKETCHING = set()  # boards whose sketches are being drawn: the studio keeps polling until they land
+
+
+def sketch_board(slug, brief):
+    """Cheap pencil frames for the screening, one per shot, all at once. Best effort: the screening plays
+    with words and motion alone, and each sketch fades in as it lands. The image model never sees the
+    film's name: "Halo" drew a video-game soldier, so the name becomes what it is ("the brass desk lamp")."""
+    name, what = str(brief.get("name") or "").strip(), str(brief.get("subject") or "").strip().rstrip(".")
+    what = re.sub(r"^(an?|the)\s+", "", what, flags=re.I) or "product"
+
+    def literal(text):
+        # the proper name only, as written (case-sensitive): "a halo of light" stays a halo of light
+        return re.sub(rf"\b{re.escape(name)}\b", f"the {what}", text) if len(name) > 1 else text
+    try:
+        shots = load_cfg(slug)["keyframes"]
+    except (OSError, ValueError):
+        return
+    rd = run_dir(slug)
+    os.makedirs(rd, exist_ok=True)
+
+    def one(k):
+        try:
+            data = venice.sketch(literal(k.get("gist") or k["prompt"]))
+            tmp = os.path.join(rd, f"sketch-{k['id']}.webp.tmp")
+            open(tmp, "wb").write(data)
+            os.replace(tmp, os.path.join(rd, f"sketch-{k['id']}.webp"))
+        except Exception as e:  # noqa: BLE001
+            sys.stderr.write(f"sketch {slug}/{k['id']}: {e}\n")
+    SKETCHING.add(slug)
+    try:
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            list(pool.map(one, shots))
+    finally:
+        SKETCHING.discard(slug)
 
 
 def finish_storyboard(s, slug, brief, controls, nt):
     try:
+        outline = load_cfg(slug)
+        outline = outline if outline.get("stage") == "outline" else None
+    except (OSError, ValueError):
+        outline = None
+    try:
         director.direct(slug, brief, refs=s["refs"], ptype=controls["type"], style=controls["style"],
-                        scenes=controls["scenes"], resolution=controls["resolution"], notes=nt)
+                        scenes=controls["scenes"], resolution=controls["resolution"], notes=nt, outline=outline)
         err = None
     except SystemExit as e:
         err = str(e)[:400]

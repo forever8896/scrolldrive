@@ -125,9 +125,30 @@
         <h2 id="board-title"></h2>
         <p id="board-tagline"></p>
       </div>
+      <button class="btn btn-ghost btn-sm" type="button" id="replay-btn" hidden><i class="ph ph-play"></i> Watch again</button>
     </div>
     <div class="strip" id="strip"></div>
     <div class="progress" aria-hidden="true"><span id="progress-bar"></span></div>
+  </section>
+
+  <!-- The screening: the storyboard played, shot by shot, each camera move acted out by the cut -->
+  <section class="screening" id="screening" hidden aria-label="Your storyboard, played">
+    <div class="sc-top">
+      <div class="sc-progress" id="sc-progress" aria-hidden="true"></div>
+      <button class="sc-skip" type="button" id="sc-skip">Skip</button>
+    </div>
+    <div class="sc-viewport" id="sc-viewport" aria-live="polite"></div>
+    <div class="sc-prep" id="sc-prep" hidden>
+      <p class="sc-prep-line">Sketching the shots <span id="sc-prep-count"></span></p>
+      <div class="sc-prep-track" aria-hidden="true"><span id="sc-prep-bar"></span></div>
+    </div>
+    <p class="sc-move" id="sc-move" aria-hidden="true"><i class="ph ph-video-camera"></i><span></span></p>
+    <div class="sc-end" id="sc-end" hidden>
+      <h2 class="sc-title" id="sc-title"></h2>
+      <p class="sc-tagline" id="sc-tagline"></p>
+      <p class="sc-ask">Like it? Tell me what to change, or pay to shoot it.</p>
+      <button class="btn btn-ghost btn-sm" type="button" id="sc-again"><i class="ph ph-arrow-counter-clockwise"></i> Watch again</button>
+    </div>
   </section>
 
   <!-- 5. Deliver, with live words -->

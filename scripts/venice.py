@@ -188,6 +188,18 @@ def image_generate(model, prompt, aspect_ratio="16:9", resolution="1K"):
     return _image_bytes(s, raw, "image generate")
 
 
+SKETCH_MODEL = "qwen-image-2-1-turbo"  # ~$0.02, ~13 s, true 16:9, no watermark (z-image-turbo came back square)
+SKETCH_STYLE = ("Film storyboard frame, loose graphite pencil sketch on warm white paper, confident gestural lines, "
+                "soft tonal shading, cinematic 16:9 composition, no text, no border, no color.")
+
+
+def sketch(shot):
+    """A cheap pencil storyboard frame for one shot, shown before anything is paid for. Returns webp bytes."""
+    s, h, raw = request("/image/generate", {"model": SKETCH_MODEL, "prompt": f"{SKETCH_STYLE} Shot: {shot}"[:7500],
+                                            "aspect_ratio": "16:9", "format": "webp", "return_binary": True}, timeout=120)
+    return _image_bytes(s, raw, "sketch")
+
+
 def image_multi_edit(model, prompt, images, aspect_ratio="16:9"):
     """Edit/compose from up to 6 reference images (URLs or data URLs). Returns image bytes."""
     s, h, raw = request("/image/multi-edit", {"modelId": model, "prompt": prompt, "images": list(images)[:6],

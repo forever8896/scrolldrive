@@ -108,6 +108,7 @@ function render(v, { quiet = false } = {}) {
   if (scene === "brief") renderBrief(changed);
   if (scene === "board") renderBoard(changed);
   if (scene === "deliver") renderDeliver(changed);
+  maybeScreen();
   renderStage();
   if (v.error && !quiet) say(`That stopped: ${v.error}`, "warn");
   if (v.job?.running) follow();
@@ -284,14 +285,23 @@ function tile(kind, item) {
   div.querySelector(".label").textContent = kind === "move" ? `Camera move ${item.from} → ${item.to}` : `Still ${item.id}`;
   div.querySelector(".prompt").textContent = kind === "move"
     ? item.prompt.replace(/^One continuous slow camera move, no cuts:\s*/i, "")
-    : item.prompt.replace(/^Keep the subject from reference[^.]*\.\s*/i, "");
+    : (item.gist || item.prompt.replace(/^Keep the subject from reference[^.]*\.\s*/i, ""));
   return div;
 }
 
 function setMedia(frame, state, url) {
   const media = frame.querySelector(".media");
+  if (state === "planned" && media.classList.contains("planned") && (media.dataset.sketch || "") === (url || "")) return;  // unchanged
   media.className = `media ${state}`;
-  if (state === "planned") {
+  delete media.dataset.sketch;
+  if (state === "planned" && url) {  // a pencil sketch of the shot, until the real still is shot
+    media.dataset.sketch = url;
+    media.classList.add("sketched");
+    media.innerHTML = `<img alt=""><span class="plate-badge"><i class="ph ph-aperture"></i> shoots when you pay</span>`;
+    const img = media.querySelector("img");
+    img.onload = () => requestAnimationFrame(() => img.classList.add("shown"));
+    img.src = url;
+  } else if (state === "planned") {
     const still = frame.classList.contains("still");
     const id = frame.dataset.id || "";
     media.innerHTML = still
@@ -341,8 +351,8 @@ function renderBoard(changed) {
   b.keyframes.forEach((k) => {
     const f = strip.querySelector(`.frame[data-id="${k.id}"]`);
     if (k.url) setMedia(f, "img", k.url);
-    else setMedia(f, phase === "shooting" ? "pending" : "planned");
-    f.querySelector(".prompt").textContent = k.prompt.replace(/^Keep the subject from reference[^.]*\.\s*/i, "");
+    else setMedia(f, phase === "shooting" ? "pending" : "planned", k.sketch);
+    f.querySelector(".prompt").textContent = k.gist || k.prompt.replace(/^Keep the subject from reference[^.]*\.\s*/i, "");
     redoControls(f, k);
   });
   b.moves.forEach((m) => {
@@ -407,6 +417,230 @@ function progressNow() {
   return (b.keyframes.length + m) / (b.keyframes.length + b.moves.length);
 }
 function setProgress(f) { $("#progress-bar").style.transform = `scaleX(${Math.max(0, Math.min(1, f))})`; }
+
+/* ---------------- the screening: the storyboard, played ---------------- */
+// When a board lands, it is shown the way a director would pitch it: one shot at a time, large, its words
+// revealed as you read them, and each camera move acted out by the cut itself (a push-in zooms through the
+// frame, a pan slides it, an orbit turns it). Pencil sketches fade in as they arrive; the words and motion
+// never wait for them. It plays once per board, then leaves the storyboard on screen.
+const SCREENED_KEY = "frameline-screened";
+const CUT = 1150;                          // ms for a camera-move transition
+const CINE = "cubic-bezier(0.65, 0, 0.35, 1)";
+let screening = null;                      // { name, token }
+
+function screenedNames() { try { return JSON.parse(store.get(SCREENED_KEY) || "[]"); } catch { return []; } }
+function markScreened(name) { store.set(SCREENED_KEY, JSON.stringify([name, ...screenedNames().filter((n) => n !== name)].slice(0, 60))); }
+
+// What a camera move does to the picture: the world moves opposite to the camera.
+function moveKind(text) {
+  const t = String(text || "").toLowerCase();
+  if (/\b(orbit|arc|circl|rotat|swing|revolv)/.test(t)) return "orbit";
+  if (/\b(pull|dolly|zoom|track|draw)s?\w*[\s-]+(back|out|away)|\bwiden|\breveal|\brecede/.test(t)) return "out";
+  if (/\b(push|dolly|zoom|move|glide|creep|track)\w*[\s-]+(in|into|closer|forward|toward|towards)|\bpush\b/.test(t)) return "in";
+  if (/\b(tilt|crane|rise|rises|lift|boom|pedestal|ascend)\w*([\s-]+up)?\b/.test(t) && !/\b(down|lower|descend)/.test(t)) return "up";
+  if (/\b(tilt|crane|boom|pedestal|descend|lower|drop)\w*([\s-]*down)?\b/.test(t)) return "down";
+  if (/\bleft\b/.test(t)) return "left";
+  if (/\bright\b/.test(t)) return "right";
+  return "drift";
+}
+
+// [outgoing frame keyframes, incoming frame keyframes] for each kind of move.
+function cutFrames(kind) {
+  const show = { opacity: 1, transform: "none", filter: "blur(0px)" };
+  const k = {
+    in:    [{ opacity: 0, transform: "scale(1.55)", filter: "blur(8px)" }, { opacity: 0, transform: "scale(0.88)", filter: "blur(4px)" }],
+    out:   [{ opacity: 0, transform: "scale(0.7)", filter: "blur(6px)" }, { opacity: 0, transform: "scale(1.22)", filter: "blur(6px)" }],
+    left:  [{ opacity: 0, transform: "translateX(38%)" }, { opacity: 0, transform: "translateX(-38%)" }],
+    right: [{ opacity: 0, transform: "translateX(-38%)" }, { opacity: 0, transform: "translateX(38%)" }],
+    up:    [{ opacity: 0, transform: "translateY(32%)" }, { opacity: 0, transform: "translateY(-32%)" }],
+    down:  [{ opacity: 0, transform: "translateY(-32%)" }, { opacity: 0, transform: "translateY(32%)" }],
+    orbit: [{ opacity: 0, transform: "translateX(-30%) rotateY(38deg)" }, { opacity: 0, transform: "translateX(30%) rotateY(-38deg)" }],
+    drift: [{ opacity: 0, transform: "scale(1.06)", filter: "blur(4px)" }, { opacity: 0, transform: "scale(1.03)", filter: "blur(4px)" }],
+  }[kind] || [];
+  return { out: [show, k[0]], in: [k[1], show] };
+}
+
+const moveText = (m) => String(m?.prompt || "").replace(/^One continuous slow camera move, no cuts:\s*/i, "").replace(/\.$/, "");
+const holdFor = (text) => Math.min(6500, Math.max(3200, String(text).split(/\s+/).length * 260));  // time to read it
+const wait = (ms, token) => new Promise((r) => setTimeout(() => r(screening?.token === token), ms));
+
+// A board plays once, automatically, when its sketches are in: they take ~10-15 s, and a screening whose
+// pictures pop in mid-shot looks broken. It never restarts by itself; only "Watch again" replays it.
+const autoPlayed = new Set();
+const boardSeen = {};                      // board name -> when it first appeared, for the sketch wait cap
+const SKETCH_WAIT = 30000;
+
+function maybeScreen() {
+  const b = V?.board;
+  const eligible = b && V.phase === "board" && !V.pay?.paid && !V.media_lost && V.agent?.mode !== "autopilot";
+  $("#replay-btn").hidden = !(b && V.phase === "board");
+  if (!eligible) { if (screening) endScreening(true); showPrep(false); return; }
+  if (screening?.name === b.name) return screenMedia();
+  if (autoPlayed.has(b.name) || screenedNames().includes(b.name)) return showPrep(false);
+  boardSeen[b.name] ??= Date.now();
+  const sketched = b.keyframes.filter((k) => k.sketch).length;
+  const ready = sketched === b.keyframes.length || (!V.sketching && Date.now() - boardSeen[b.name] > 4000)
+    || Date.now() - boardSeen[b.name] > SKETCH_WAIT;
+  if (!ready) return showPrep(true, sketched, b.keyframes.length);
+  autoPlayed.add(b.name);
+  showPrep(false);
+  startScreening();
+}
+
+// While the sketches are drawn: the screening's frame, quiet, with how many have landed.
+function showPrep(on, done = 0, total = 0) {
+  const prep = $("#sc-prep");
+  if (!on) {
+    if (!prep.hidden) { prep.hidden = true; if (!screening) { $("#screening").hidden = true; document.body.classList.remove("screening-on"); } }
+    return;
+  }
+  const el = $("#screening");
+  if (el.hidden) {
+    el.hidden = false;
+    document.body.classList.add("screening-on");
+    $("#sc-viewport").innerHTML = "";
+    $("#sc-progress").innerHTML = "";
+    $("#sc-end").hidden = true;
+    openDock(false);
+  }
+  if (prep.hidden) { prep.hidden = false; enter(prep, { opacity: 0, transform: "translateY(8px)" }, { duration: 600 }); }
+  $("#sc-prep-count").textContent = total ? `${done} of ${total}` : "";
+  $("#sc-prep-bar").style.transform = `scaleX(${total ? Math.max(0.04, done / total) : 0.04})`;
+}
+
+function buildFrame(k) {
+  const f = document.createElement("figure");
+  f.className = "sc-frame";
+  f.hidden = true;  // out of layout until it plays: a retired frame can never show through another
+  f.dataset.id = k.id;
+  f.innerHTML = `<div class="sc-plate"><span class="sc-shot"></span><img alt=""></div>
+    <figcaption><span class="sc-label"></span><span class="sc-text"></span></figcaption>`;
+  f.querySelector(".sc-shot").textContent = k.id;
+  f.querySelector(".sc-label").textContent = `Shot ${k.id}`;
+  f.querySelector("img").alt = k.gist || "";
+  return f;
+}
+
+// Sketches arrive while it plays: each fades in, out of a blur, the moment it lands.
+function screenMedia() {
+  (V.board?.keyframes || []).forEach((k) => {
+    const img = $(`#sc-viewport .sc-frame[data-id="${k.id}"] img`);
+    const src = k.url || k.sketch;
+    if (!img || !src || img.dataset.src === src) return;
+    img.dataset.src = src;
+    img.onload = () => requestAnimationFrame(() => img.closest(".sc-plate").classList.add("has-sketch"));
+    img.src = src;
+  });
+}
+
+function startScreening() {
+  const b = V.board;
+  if (screening) endScreening(true);
+  $("#sc-prep").hidden = true;
+  const token = Symbol(b.name);
+  screening = { name: b.name, token };
+  const el = $("#screening");
+  const vp = $("#sc-viewport");
+  vp.innerHTML = "";
+  $("#sc-progress").innerHTML = "";
+  $("#sc-end").hidden = true;
+  b.keyframes.forEach((k) => {
+    vp.append(buildFrame(k));
+    const seg = document.createElement("span");
+    seg.append(document.createElement("i"));
+    $("#sc-progress").append(seg);
+  });
+  el.hidden = false;
+  document.body.classList.add("screening-on");
+  openDock(false);  // on a phone the conversation sheet steps aside for the screening
+  enter(el, { opacity: 0 }, { duration: 700 });
+  screenMedia();
+  play(token);
+}
+
+async function play(token) {
+  const b = V.board;
+  const frames = [...$("#sc-viewport").children];
+  const segs = [...$("#sc-progress").children];
+  for (let i = 0; i < frames.length; i += 1) {
+    if (screening?.token !== token) return;
+    const f = frames[i];
+    const k = b.keyframes[i];
+    frames.forEach((x, j) => { if (j < i - 1) x.hidden = true; });  // belt and braces: only prev + this exist
+    f.hidden = false;
+    if (i === 0) {
+      f.style.opacity = 1;
+      if (!reduceMotion) f.animate([{ opacity: 0, transform: "scale(0.96)", filter: "blur(10px)" }, { opacity: 1, transform: "none", filter: "blur(0px)" }],
+        { duration: 1100, easing: "cubic-bezier(0.16, 1, 0.3, 1)" });
+    } else {
+      const m = b.moves[i - 1];
+      const kind = reduceMotion ? "fade" : moveKind(m?.prompt);
+      const cap = $("#sc-move");
+      cap.querySelector("span").textContent = moveText(m);
+      cap.classList.add("on");
+      const fr = cutFrames(kind);
+      const prev = frames[i - 1];
+      const opts = { duration: reduceMotion ? 600 : CUT, easing: CINE, fill: "forwards" };
+      f.style.opacity = 1;
+      const a = prev.animate(reduceMotion ? [{ opacity: 1 }, { opacity: 0 }] : fr.out, opts);
+      f.animate(reduceMotion ? [{ opacity: 0 }, { opacity: 1 }] : fr.in, opts);
+      shutter();
+      await a.finished.catch(() => {});
+      prev.hidden = true;
+      prev.getAnimations().forEach((x) => x.cancel());
+      if (!(await wait(500, token))) return;
+      cap.classList.remove("on");
+    }
+    f.classList.add("now");
+    kinetic(f.querySelector(".sc-text"), k.gist || k.prompt);
+    const hold = reduceMotion ? 4200 : holdFor(k.gist || k.prompt);
+    // The slow push of a held frame, and the progress segment filling as you read.
+    if (!reduceMotion) f.querySelector(".sc-plate").animate([{ transform: "scale(1)" }, { transform: "scale(1.035)" }], { duration: hold + CUT, easing: "linear", fill: "forwards" });
+    segs.forEach((s, j) => s.classList.toggle("done", j < i));
+    const bar = segs[i].firstChild;
+    bar.getAnimations().forEach((x) => x.cancel());
+    bar.animate([{ transform: "scaleX(0)" }, { transform: "scaleX(1)" }], { duration: hold, easing: "linear", fill: "forwards" });
+    if (!(await wait(hold, token))) return;
+  }
+  showEnd(token);
+}
+
+// The end card: the film's name, its line, and the one question.
+async function showEnd(token) {
+  const b = V.board;
+  const last = [...$("#sc-viewport").children].at(-1);
+  if (last && !reduceMotion) await last.animate([{ opacity: 1, filter: "blur(0px)" }, { opacity: 0, filter: "blur(10px)" }], { duration: 700, easing: CINE, fill: "forwards" }).finished.catch(() => {});
+  if (screening?.token !== token) return;
+  $("#sc-viewport").childNodes.forEach((x) => { x.hidden = true; });
+  $("#sc-progress").childNodes.forEach((s) => s.classList.add("done"));
+  $("#sc-title").textContent = "";
+  $("#sc-tagline").textContent = b.copy.tagline || "";
+  $("#sc-end").hidden = false;
+  kinetic($("#sc-title"), b.copy.title || "Your film");
+  stagger([$("#sc-tagline"), $(".sc-ask"), $("#sc-again")], { opacity: 0, transform: "translateY(10px)" }, 500, 120);
+  chime();
+  markScreened(b.name);
+  if (!(await wait(5200, token))) return;
+  endScreening(false);
+}
+
+function endScreening(instant) {
+  const s = screening;
+  screening = null;
+  if (s) markScreened(s.name);
+  $("#sc-move").classList.remove("on");
+  document.body.classList.remove("screening-on");
+  const el = $("#screening");
+  if (el.hidden) return;
+  if (instant || reduceMotion) { el.hidden = true; return; }
+  el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 600, easing: CINE }).finished.then(() => { if (!screening) el.hidden = true; });
+  stagger(document.querySelectorAll("#strip .frame"), { opacity: 0, transform: "translateY(14px)" }, 250, 60);
+}
+
+$("#sc-skip").addEventListener("click", () => endScreening(false));
+$("#sc-again").addEventListener("click", () => startScreening());
+$("#replay-btn").addEventListener("click", () => startScreening());
+addEventListener("keydown", (e) => { if (e.key === "Escape" && screening) endScreening(false); });
 
 /* ---------------- payment: owner wallets sign, everyone else pays USDC on Base ---------------- */
 const wallet = { address: null, owner: false };
@@ -1438,7 +1672,7 @@ let pollTimer = null;
 function schedulePoll() {
   clearTimeout(pollTimer);
   const w = V.agent?.waiting;
-  if (!(V.agent?.busy || w === "job" || w === "slot")) return;
+  if (!(V.agent?.busy || w === "job" || w === "slot" || V.drafting || V.sketching)) return;
   pollTimer = setTimeout(async () => {
     try { render(await api(`/api/session?session=${V.id}`), { quiet: true }); } catch { schedulePoll(); }
   }, 1600);

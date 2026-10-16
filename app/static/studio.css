@@ -1,8 +1,9 @@
 /* Studio: one room, one scene at a time, the director's conversation docked beside it.
    Tokens, buttons, frames, ledger and device come from app.css. */
-.studio-body { height: 100dvh; overflow: hidden; display: grid; grid-template-rows: 72px minmax(0, 1fr); grid-template-columns: minmax(0, 1fr); --dock: clamp(340px, 26vw, 420px); }
-.work { min-height: 0; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) var(--dock); transition: grid-template-columns 0.6s var(--ease); }
-.dock-off .work { grid-template-columns: minmax(0, 1fr) 0px; }
+.studio-body { height: 100dvh; overflow: hidden; display: grid; grid-template-rows: 72px minmax(0, 1fr); grid-template-columns: minmax(0, 1fr); --dock: clamp(360px, 30vw, 460px); }
+/* The conversation leads, on the left; the stage (screening, board, stills, site) takes the rest. */
+.work { min-height: 0; min-width: 0; display: grid; grid-template-columns: var(--dock) minmax(0, 1fr); transition: grid-template-columns 0.6s var(--ease); }
+.dock-off .work { grid-template-columns: 0px minmax(0, 1fr); }
 .btn-sm { padding: 0.55rem 0.95rem; font-size: 0.86rem; }
 .link-btn {
   background: none; border: 0; padding: 0.4rem 0; cursor: pointer; color: var(--text-2);
@@ -330,7 +331,7 @@
 /* The director: a conversation docked beside the work */
 .dock {
   position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
-  border-left: 1px solid var(--line); background: var(--bg-2);
+  border-right: 1px solid var(--line); background: var(--bg-2); order: -1;
 }
 .dock-off .dock { visibility: hidden; }
 .dock-head { display: flex; align-items: center; gap: 0.7rem; padding: 0.85rem 1rem; border-bottom: 1px solid var(--line); flex: none; }
@@ -601,3 +602,97 @@ body.has-film .stage-inner { width: min(46%, 560px); margin: 0; }
 .deliver.lost .device iframe, .deliver.lost .deliver-actions, .deliver.lost .moves, .deliver.lost .edit-hint { display: none; }
 .deliver.lost .device-lost { display: grid; justify-items: center; gap: 0.6rem; max-width: 30ch; text-align: center; color: var(--text-2); font-size: 0.95rem; }
 .deliver.lost .device-lost i { font-size: 1.6rem; color: var(--text-3); }
+
+/* ---------------- The screening ---------------- */
+.screening {
+  position: absolute; inset: 0; z-index: 4; display: grid; grid-template-rows: auto minmax(0, 1fr) auto;
+  padding: clamp(18px, 2.6vw, 36px) clamp(20px, 4vw, 64px) clamp(18px, 2.6vw, 32px);
+  background: var(--bg); overflow: hidden;
+}
+.sc-top { display: flex; align-items: center; gap: 1.2rem; }
+.sc-progress { flex: 1; display: flex; gap: 6px; }
+.sc-progress span { flex: 1; height: 2px; border-radius: 2px; background: var(--line-2); overflow: hidden; }
+.sc-progress span i { display: block; height: 100%; background: var(--text); transform-origin: left; transform: scaleX(0); }
+.sc-progress span.done i { transform: scaleX(1); }
+.sc-skip {
+  border: 0; background: none; cursor: pointer; padding: 0.35rem 0.2rem; color: var(--text-3);
+  font-size: 0.82rem; letter-spacing: 0.01em; transition: color 0.2s;
+}
+.sc-skip:hover { color: var(--text); }
+/* The plate is sized from the screening area itself, with a fixed reserve below it for the caption, so the
+   words can never land on the picture whatever the window: plate + caption always fit the container. */
+.sc-viewport {
+  position: relative; min-height: 0; perspective: 1800px; margin: clamp(14px, 2vw, 26px) 0;
+  container-type: size;
+}
+.sc-frame {  /* cq units resolve against .sc-viewport only on its children, so the sizes live here */
+  --cap: clamp(7.5rem, 22cqh, 10rem); --pw: min(100cqw, calc((100cqh - var(--cap)) * 16 / 9));
+  position: absolute; inset: 0; margin: 0; display: grid; grid-template-columns: var(--pw);
+  grid-template-rows: auto var(--cap); align-content: center; justify-content: center; justify-items: start;
+  opacity: 0; will-change: transform, opacity; transform-origin: 50% 42%; overflow: hidden;
+}
+.sc-frame[hidden] { display: none; }  /* the class sets display: grid, which would otherwise beat [hidden] */
+.sc-plate {
+  position: relative; aspect-ratio: 16 / 9; width: 100%; border-radius: 14px;
+  overflow: hidden; background: linear-gradient(160deg, var(--surface-2), var(--surface));
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.05) inset, 0 40px 120px -30px rgb(0 0 0 / 0.55);
+}
+.sc-plate img {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; filter: blur(14px);
+  transform: scale(1.04); transition: opacity 1.4s var(--ease), filter 1.6s var(--ease), transform 1.8s var(--ease);
+}
+.sc-plate.has-sketch img { opacity: 1; filter: none; transform: none; }
+.sc-shot {
+  position: absolute; left: clamp(18px, 2.4vw, 32px); bottom: clamp(10px, 1.6vw, 22px);
+  font: 600 clamp(72px, 10vw, 150px)/0.8 Geist, sans-serif; letter-spacing: -0.06em;
+  color: transparent; -webkit-text-stroke: 1px var(--line-2); transition: opacity 0.8s var(--ease);
+}
+.sc-plate.has-sketch .sc-shot { opacity: 0; }
+.sc-frame figcaption { display: grid; align-content: start; gap: 0.5rem; padding-top: clamp(14px, 3cqh, 24px); max-width: min(100%, 48ch); }
+.sc-label { font: 500 0.76rem/1 "Geist Mono", monospace; color: var(--text-3); letter-spacing: 0.02em; }
+.sc-text {
+  font-size: clamp(1.05rem, min(2.1vw, 4.6cqh), 1.85rem); font-weight: 600; letter-spacing: -0.022em; line-height: 1.22;
+  text-wrap: balance; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.sc-text .w { display: inline-block; }
+.sc-move {
+  justify-self: start; display: inline-flex; align-items: center; gap: 0.55rem; max-width: min(100%, 70ch);
+  padding: 0.5rem 0.9rem; border-radius: 999px; border: 1px solid var(--line-2); background: var(--surface);
+  font-size: 0.84rem; color: var(--text-2); opacity: 0; transform: translateY(8px);
+  transition: opacity 0.45s var(--ease), transform 0.6s var(--ease);
+}
+.sc-move.on { opacity: 1; transform: none; }
+.sc-move i { color: var(--accent); font-size: 1rem; flex: none; }
+.sc-move span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-end {
+  position: absolute; inset: 0; display: grid; align-content: center; justify-items: start; gap: 1rem;
+  padding: 0 clamp(20px, 4vw, 64px);
+}
+.sc-title { font-size: clamp(3rem, 7vw, 6rem); font-weight: 600; letter-spacing: -0.045em; line-height: 0.98; }
+.sc-title .w { display: inline-block; }
+.sc-tagline { font-size: clamp(1.05rem, 1.6vw, 1.35rem); color: var(--text-2); max-width: 44ch; }
+.sc-ask { margin-top: 1.2rem; font-size: 1rem; color: var(--text); }
+.screening-on .stage { display: none; }
+
+/* Board tiles: the pencil sketch stands in until the real still is shot */
+.frame .media.planned.sketched { border: 0; background: var(--surface); }
+.frame .media.planned.sketched img { width: 100%; height: 100%; object-fit: cover; }
+.board-top { align-items: flex-end; }
+#replay-btn { flex: none; }
+
+@media (max-width: 900px) {
+  .dock { order: 0; }
+  .screening { position: fixed; inset: 0 0 var(--sheet, 150px) 0; z-index: 30; padding: 16px; }
+  .sc-text { font-size: clamp(1rem, 4.4cqh, 1.2rem); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sc-plate img, .sc-move, .sc-shot { transition: opacity 0.6s linear; transform: none; filter: none; }
+}
+
+/* While the sketches are drawn: one quiet line and a hairline that fills as they land */
+.sc-prep { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 1.1rem; }
+.sc-prep-line { font-size: clamp(1.1rem, 1.8vw, 1.5rem); font-weight: 500; letter-spacing: -0.015em; color: var(--text-2); }
+.sc-prep-line span { font: 500 0.82rem/1 "Geist Mono", monospace; color: var(--text-3); margin-left: 0.6rem; }
+.sc-prep-track { width: min(280px, 60vw); height: 2px; border-radius: 2px; background: var(--line-2); overflow: hidden; }
+.sc-prep-track span { display: block; height: 100%; background: var(--text); transform-origin: left; transform: scaleX(0.04);
+  transition: transform 0.9s var(--ease); }
