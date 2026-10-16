@@ -124,6 +124,12 @@ def restored(s):
     return s
 
 
+def ensure_film(name):
+    """A film whose files are in the bucket but not on this disk is brought back before anything reads it."""
+    if SYNC and name:
+        SYNC.ensure(run_dir(name))
+
+
 def cfg_path(name):
     return os.path.join(CONFIGS, f"{name}.json")
 
@@ -243,6 +249,7 @@ def any_running():
 
 def launch(s, stage, only=None, refilm=None):
     name = s["name"]
+    ensure_film(name)  # a reshoot or refilm builds on the film's earlier files
     os.makedirs(run_dir(name), exist_ok=True)
     log = os.path.join(run_dir(name), f"job-{stage}-{int(time.time())}.log")
     args = [sys.executable, "-u", os.path.join(ROOT, "scripts", "scrollsite.py"), cfg_path(name), "--yes",
@@ -274,6 +281,7 @@ def last_error(job):
 
 def settle(s):
     """Move a session past a finished job. Called whenever a session is read."""
+    ensure_film(s.get("name"))
     job = s.get("job")
     if not job or s["phase"] not in ("shooting", "filming"):
         return
@@ -301,6 +309,7 @@ def settle(s):
 # --- views --------------------------------------------------------------------------------
 
 def board_view(name):
+    ensure_film(name)
     cfg = load_cfg(name)
     rd = run_dir(name)
     p = prices()
@@ -342,10 +351,11 @@ LOST = ("The studio was updated and could not keep this film's pictures and film
 
 
 def media_lost(s):
-    """A film whose stills or finished film are gone from disk, not rendering, and with no bucket to bring them back."""
+    """A film whose stills or finished film are gone: not on disk, not in the bucket, and not rendering."""
     name = s.get("name")
-    if storage.MEDIA or not name or rendering(s) or not os.path.exists(cfg_path(name)):
+    if not name or rendering(s) or not os.path.exists(cfg_path(name)):
         return False
+    ensure_film(name)  # with a bucket, whatever it holds is back on disk now; what is still missing is gone
     rd = run_dir(name)
     if s["phase"] == "deliver":
         return not os.path.exists(os.path.join(rd, "site", "film.mp4"))
@@ -445,7 +455,8 @@ def clean_copy(new, cfg):
 
 
 def status():
-    out = {"guardrails": PAY_GUARDRAILS, "agent": x402pay.AGENT_ADDRESS}
+    out = {"guardrails": PAY_GUARDRAILS, "agent": x402pay.AGENT_ADDRESS,
+           "storage": SYNC.health if SYNC else {"state": "this disk only", "media": "this disk only"}}
     try:
         addr = x402pay.AGENT_ADDRESS[2:].lower()
         body = {"jsonrpc": "2.0", "id": 1, "method": "eth_call",
@@ -1843,7 +1854,8 @@ def main():
     threading.Thread(target=watcher, daemon=True).start()
     if SYNC:
         threading.Thread(target=SYNC.run, daemon=True).start()
-        threading.Thread(target=SYNC.restore_media, daemon=True).start()
+        SYNC.busy = lambda: {s["name"] for s in list(SESSIONS.values()) if s.get("name") and rendering(s)}
+        threading.Thread(target=SYNC.start_media, daemon=True).start()
     print(f"Frameline studio at http://{host}:{port} (payments to {PAY_TO}, {len(OWNER_WALLETS)} owner wallet(s))")
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 

@@ -7,8 +7,10 @@ The container's disk is temporary. Two kinds of data outlive it:
   R2, S3, ...) when one is configured: S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY, and
   S3_REGION (default "auto"). Without one, media stays on the disk as before.
 
-A background syncer copies whatever changed every few seconds; on start, state is restored at once and media
-is fetched in the background (and on demand, when a file is asked for before it has arrived).
+A background syncer copies whatever changed every few seconds. On start, state is restored at once; media is
+not downloaded wholesale (the container's disk is memory on Cloud Run): the bucket is indexed, a film is brought
+back the first time it is needed, and films nobody has touched for a while are dropped from the disk once they
+are safely in the bucket.
 Runs on the 1Claw runtime (Cloud Run sets K_SERVICE); locally only with STUDIO_SYNC=1, into its own namespace.
 """
 import base64
@@ -18,6 +20,7 @@ import hmac
 import json
 import mimetypes
 import os
+import shutil
 import sys
 import threading
 import time
@@ -134,6 +137,26 @@ def get_media(key, path):
         os.utime(path, (float(mtime), float(mtime)))
 
 
+def delete_media(key):
+    _s3("DELETE", key).close()
+
+
+def self_test():
+    """Write, read and delete one small object: proves the bucket and keys work. Returns an error or None."""
+    key, body = f"health/{int(time.time())}-{os.getpid()}.txt", b"frameline storage check"
+    try:
+        _s3("PUT", key, body, headers={"content-type": "text/plain"}).close()
+        with _s3("GET", key) as r:
+            if r.read() != body:
+                return "read back different bytes"
+        delete_media(key)
+        return None
+    except urllib.error.HTTPError as e:
+        return f"{e.code} {e.read()[:200].decode(errors='replace')}"
+    except Exception as e:  # noqa: BLE001
+        return f"{type(e).__name__}: {e}"[:300]
+
+
 def list_media(prefix):
     keys, token = [], None
     while True:
@@ -156,8 +179,13 @@ class Syncer:
         self.root, self.sessions_dir, self.configs_dir = root, sessions_dir, configs_dir
         self.media_dirs = media_dirs  # {"runs": path, "uploads": path}
         self.seen = {}
-        self.fetching = set()
+        self.remote = set()       # media keys known to be in the bucket
+        self.used = {}            # local media folder -> when it was last needed
+        self.ready = set()        # folders already brought back since this container started
+        self.busy = lambda: set()  # film names rendering now (set by the server); never pruned
         self.lock = threading.Lock()
+        self.health = {"state": "1Claw memory", "media": f"bucket {S3['bucket']}" if MEDIA else "this disk only",
+                       "ok": None, "error": None, "uploaded": 0, "last_upload": None, "failures": 0}
 
     def state_files(self):
         for d, prefix in ((self.sessions_dir, "s."), (self.configs_dir, "c.")):
@@ -165,11 +193,12 @@ class Syncer:
                 if f.endswith(".json"):
                     yield prefix + f[:-5], os.path.join(d, f)
 
-    def media_files(self):
+    def media_files(self, under=None):
         for name, d in self.media_dirs.items():
-            for dirpath, _, files in os.walk(d):
+            top = under if under and os.path.abspath(under).startswith(os.path.abspath(d)) else (None if under else d)
+            for dirpath, _, files in os.walk(top) if top else ():
                 for f in files:
-                    if f.endswith(MEDIA_SKIP) or f.startswith(MEDIA_SKIP_PREFIX) or ".send." in f:
+                    if f.endswith(MEDIA_SKIP) or f.startswith(MEDIA_SKIP_PREFIX) or ".send." in f or f.endswith(".part"):
                         continue
                     path = os.path.join(dirpath, f)
                     yield f"{name}/{os.path.relpath(path, d).replace(os.sep, '/')}", path
@@ -197,15 +226,22 @@ class Syncer:
                 if self.changed(key, path):
                     try:
                         put_media(key, path)
+                        self.remote.add(key)
+                        self.health.update(uploaded=self.health["uploaded"] + 1, last_upload=time.time())
                     except Exception as e:  # noqa: BLE001
                         self.seen.pop(key, None)
+                        self.health.update(failures=self.health["failures"] + 1, error=f"upload {key}: {e}"[:300])
                         log(f"media {key}: {e}")
 
     def run(self, every=5):
+        last_prune = time.time()
         while True:
             time.sleep(every)
             with self.lock:
                 self.tick()
+            if MEDIA and time.time() - last_prune > 600:
+                last_prune = time.time()
+                self.prune()
 
     def restore_state(self, fix_session):
         """Bring back sessions and configs the disk does not have. fix_session(dict) adapts paths."""
@@ -229,17 +265,37 @@ class Syncer:
             n += 1
         return n
 
-    def restore_media(self):
+    def start_media(self):
+        """At start: prove the bucket works, index what it holds, and bring back the small uploads.
+        Films stay in the bucket until someone needs one."""
         if not MEDIA:
             return
-        for name, d in self.media_dirs.items():
-            try:
-                keys = list_media(f"{name}/")
-            except Exception as e:  # noqa: BLE001
-                log(f"could not list media: {e}")
-                return
-            for key in keys:
-                self.fetch(key, os.path.join(d, key[len(name) + 1:]))
+        err = self_test()
+        self.health.update(ok=err is None, error=err)
+        if err:
+            log(f"bucket check failed: {err}")
+            return
+        try:
+            for name in self.media_dirs:
+                self.remote.update(list_media(f"{name}/"))
+        except Exception as e:  # noqa: BLE001
+            self.health.update(ok=False, error=f"index: {e}"[:300])
+            return
+        d = self.media_dirs.get("uploads")
+        for key in [k for k in self.remote if k.startswith("uploads/")]:
+            self.fetch(key, os.path.join(d, key[len("uploads/"):]))
+
+    def ensure(self, folder):
+        """Make a whole media folder (one film) local, from the bucket, before anything reads it."""
+        folder = os.path.abspath(folder)
+        self.used[folder] = time.time()
+        if not MEDIA or folder in self.ready:
+            return
+        key = self.media_key(os.path.join(folder, "x"))
+        prefix = key[:-1] if key else None
+        for k in [k for k in list(self.remote) if prefix and k.startswith(prefix)]:
+            self.fetch(k, os.path.join(folder, k[len(prefix):]))
+        self.ready.add(folder)
 
     def fetch(self, key, path):
         """Bring one media file back if the disk does not have it. Safe to call from a request."""
@@ -251,11 +307,31 @@ class Syncer:
             try:
                 get_media(key, path)
                 self.seen[key] = os.path.getmtime(path)
+                self.remote.add(key)
                 return True
             except Exception as e:  # noqa: BLE001
                 if not (isinstance(e, urllib.error.HTTPError) and e.code == 404):
                     log(f"fetch {key}: {e}")
                 return False
+
+    def synced(self, folder):
+        """Every file in the folder is in the bucket as it is now."""
+        return all(k in self.remote and self.seen.get(k) == os.path.getmtime(p) for k, p in self.media_files(folder))
+
+    def prune(self, idle=2 * 3600):
+        """Drop films nobody has needed for a while from the disk (it is memory), once the bucket has them."""
+        runs = self.media_dirs.get("runs")
+        busy = self.busy()
+        for name in os.listdir(runs) if runs and os.path.isdir(runs) else []:
+            folder = os.path.abspath(os.path.join(runs, name))
+            newest = max((os.path.getmtime(p) for _, p in self.media_files(folder)), default=0)
+            if name in busy or time.time() - max(self.used.get(folder, 0), newest) < idle:
+                continue
+            with self.lock:
+                if self.synced(folder):
+                    shutil.rmtree(folder, ignore_errors=True)
+                    self.used.pop(folder, None)
+                    self.ready.discard(folder)
 
     def media_key(self, path):
         """The bucket key for a local media path, or None."""
