@@ -57,7 +57,8 @@ def shot_for_beat(i, n_beats, n_shots):
 
 
 def ask(content):
-    body = {"model": MODEL, "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content}],
+    model = "openrouter/" + MODEL if MODEL.startswith(director.SHROUD_PROVIDER_PREFIXES) else MODEL
+    body = {"model": model, "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content}],
             "response_format": {"type": "json_object"}, "max_tokens": 3000, "temperature": 0.5}
     req = urllib.request.Request(
         director.SHROUD, data=json.dumps(body).encode(), method="POST",

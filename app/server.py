@@ -575,15 +575,46 @@ def core_storyboard(s, controls=None, brief_edits=None, notes=""):
             (pay.get("locked") or pay.get("usd", 0) + 1e-9 >= (price_usd({"name": slug}) or 1e9)):
         pay["board"] = slug  # paid but nothing generated yet: the payment moves to the new storyboard
     s["name"], s["phase"], s["job"], s["error"] = slug, "board", None, None
+    s["drafting"] = slug
     save(s)
-    # Stage 2: the heavy production pass (real per-shot prompts, theme, page copy). The board is already up;
-    # the customer reads the scenes while this fills in. Shooting is gated on it finishing (stage == final).
+    # Stage 2: the heavy production pass (real per-shot prompts, theme, page copy) runs behind the board, so
+    # the price is on screen while it works. Shooting waits for it; a payment made meanwhile starts the stills
+    # the moment it is done.
+    threading.Thread(target=finish_storyboard, args=(s, slug, brief, controls, nt), daemon=True).start()
+
+
+def finish_storyboard(s, slug, brief, controls, nt):
     try:
         director.direct(slug, brief, refs=s["refs"], ptype=controls["type"], style=controls["style"],
                         scenes=controls["scenes"], resolution=controls["resolution"], notes=nt)
+        err = None
     except SystemExit as e:
-        s["error"] = str(e)[:400]  # the outline stands and stays on screen; production can be retried
+        err = str(e)[:400]
+    if s.get("name") != slug:  # redrawn meanwhile: this pass belonged to an older board
+        return
+    s.pop("drafting", None)
+    if err:  # the outline stays on screen; the director is told and can redraft
+        s["error"] = err
+        s.pop("shoot_when_ready", None)
+        chat(s, "action", f"Could not {TOOL_TRIES['storyboard']}", tool="storyboard", ok=False, detail=err)
+        kick(s, "self")
+        return
     save(s)
+    if s.pop("shoot_when_ready", None) and s["phase"] == "board" and (is_paid(s) or s.get("code_ok")) and not rendering(s):
+        try:
+            core_shoot(s)
+            chat(s, "action", TOOL_LABELS["shoot"], tool="shoot")
+            a = agent_of(s)
+            if not a.get("busy"):
+                a["waiting"] = "job"
+                save(s)
+        except Refusal as e:
+            chat(s, "action", f"Could not start shooting: {e}", tool="shoot", ok=False)
+            kick(s, "self")
+
+
+def storyboard_finishing(s):
+    return bool(s.get("drafting")) and s.get("drafting") == s.get("name")
 
 
 def core_start(s, stage, only=None, refilm=None):
@@ -591,7 +622,7 @@ def core_start(s, stage, only=None, refilm=None):
         raise Refusal("This step needs payment first.", 402, need_payment=True)
     cfg = load_cfg(s["name"])
     if cfg.get("stage") == "outline":  # the fast outline is up but the full prompts are not ready to shoot from
-        raise Refusal("The storyboard is still being finished; try again in a moment.", 409, busy=True)
+        raise Refusal("The storyboard is still being finished; the stills start the moment it is.", 409, drafting=True)
     p = prices()
     n = len(cfg["keyframes"])
     clip = p["clip_usd"][cfg["video"].get("resolution", "768P")]
@@ -808,6 +839,9 @@ def film_state(s):
             st["site_ready"] = True
     if a.get("inspection"):
         st["your_inspection"] = a["inspection"]
+    if storyboard_finishing(s):
+        st["storyboard_finishing"] = ("The board is up and priced; the detailed shot prompts are still being written in "
+                                      "the background. Do not redraft or shoot for that reason; payment can be made now.")
     if media_lost(s):
         st["files_lost"] = LOST + " Tell the customer plainly if they ask; do not claim the site or stills are ready."
     if (s.get("payment") or {}).get("locked"):
@@ -954,8 +988,12 @@ def agent_turn(s, trigger):
                 a.pop("doing", None)  # a thin or unusual pitch: let the model-driven loop handle it below
             else:
                 b = s.get("brief") or {}
-                if not b.get("questions"):   # a complete pitch needs no questions -> compose now
-                    subj = (b.get("subject") or b.get("name") or "").strip()[:80].rstrip(".")
+                if (b.get("subject") or b.get("name")):  # enough to draft from; open questions come with the board
+                    name, what = (b.get("name") or "").strip(), (b.get("subject") or "").strip().rstrip(".")
+                    subj = f"{name}, {what[:1].lower()}{what[1:]}" if name and what and name.lower() not in what.lower() else (what or name)
+                    if len(subj) > 80:  # cut at a word, never mid-word
+                        subj = subj[:80].rsplit(" ", 1)[0].rstrip(",;:") + "…"
+                    subj = subj[:1].upper() + subj[1:]
                     n = (s.get("controls") or {}).get("scenes") or b.get("scenes") or 3
                     chat(s, "agent", (f"{subj}. " if subj else "") + f"Composing {n} camera moves now.")
                     a["steps"] = a.get("steps", 0) + 1
@@ -1002,6 +1040,11 @@ def agent_turn(s, trigger):
                     sys.stderr.write(f"agent tool {d['tool']}: {type(e).__name__}: {e}\n")
                     e2 = Refusal(f"{type(e).__name__}: {e}"[:300], 502)
                 e = e2
+                if e.extra.get("drafting"):
+                    s["shoot_when_ready"] = True
+                    chat(s, "action", "The stills start the moment the storyboard is finished.", tool=d["tool"])
+                    a["waiting"] = "customer"
+                    return
                 if e.extra.get("busy"):
                     if rendering(s):
                         chat(s, "action", f"Could not {TOOL_TRIES.get(d['tool'], d['tool'])} yet: this film is still rendering.",
@@ -1601,6 +1644,11 @@ class Handler(BaseHTTPRequestHandler):
                     save(s)
                 return
             except Refusal as e:
+                if e.extra.get("drafting"):
+                    s["shoot_when_ready"] = True
+                    chat(s, "action", "The stills start the moment the storyboard is finished.", tool="shoot")
+                    save(s)
+                    return
                 if e.extra.get("busy") and not a.get("busy"):
                     chat(s, "action", "Waiting for the camera: another film is rendering.", tool="shoot")
                     a["waiting"] = "slot"  # the watcher wakes the director, who shoots
@@ -1848,6 +1896,10 @@ def main():
         print(f"storage: {SYNC.restore_state(restored)} documents restored from 1Claw memory; "
               f"media {'in ' + storage.S3['bucket'] if storage.MEDIA else 'on this disk only (no bucket configured)'}")
     load_sessions()
+    for s in SESSIONS.values():  # a production pass cut off by a restart is started again
+        if storyboard_finishing(s) and s.get("brief"):
+            threading.Thread(target=finish_storyboard, daemon=True, args=(
+                s, s["name"], intake.director_brief(s["pitch"], s["brief"], s.get("answers") or []), s["controls"], None)).start()
     for s in SESSIONS.values():  # a restart interrupts any agent mid-thought; renders carry on
         if (s.get("agent") or {}).get("busy"):
             s["agent"]["busy"], s["agent"]["waiting"] = False, "job" if s.get("job") else "customer"

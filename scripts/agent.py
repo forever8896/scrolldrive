@@ -107,6 +107,8 @@ def llm(model, system, content, max_tokens=900, temperature=0.4):
             with urllib.request.urlopen(req, timeout=180) as r:
                 text = json.loads(r.read())["choices"][0]["message"].get("content") or ""
         except urllib.error.HTTPError as e:
+            if e.code == 401:
+                x402pay.forget_token()
             raise AgentError(f"Shroud refused ({e.code}): {e.read().decode(errors='replace')[:300]}")
         except (urllib.error.URLError, TimeoutError, KeyError, ValueError) as e:
             last = e

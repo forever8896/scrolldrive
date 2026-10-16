@@ -352,7 +352,7 @@
       <h2>Known gaps</h2>
       <ul>
         <li>Payment is in USDC on Base only, from a wallet. No cards yet.</li>
-        <li>Shroud no longer routes Anthropic, Google or OpenAI models through OpenRouter (the <code>openrouter/</code> model prefix is rejected), so the roles use other providers' models.</li>
+        <li>Model latency swings with provider load: the same draft can take 8 s or 3 minutes. The studio races a second request after 30 s, and runs its vision roles on Gemini 2.5 Flash through Shroud, which measured the steadiest (about 9 s per storyboard).</li>
         <li>Camera moves can drift from their end still; the join check flags it, and the director can refilm a move, but it does not judge the moves by eye yet.</li>
         <li>The studio renders one film at a time; an order that arrives while another film renders waits for the camera.</li>
         <li>Pitch reading and the typographer take 20 seconds to 2 minutes because the model looks at every image.</li>

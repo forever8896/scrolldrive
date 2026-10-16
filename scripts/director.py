@@ -32,7 +32,7 @@ import scrollsite  # noqa: E402
 import x402pay  # noqa: E402
 
 SHROUD = "https://shroud.1claw.co/v1/chat/completions"
-DEFAULT_MODEL = "xiaomi/mimo-v2.6-flash"
+DEFAULT_MODEL = "google/gemini-2.5-flash"  # vision; steady ~9 s drafts (mimo-v2.6-flash spiked to 80-180 s)
 # Shroud reads these model-name prefixes as "call that provider directly", overriding
 # X-Shroud-Provider. For such models we ask for OpenRouter explicitly via "openrouter/...".
 SHROUD_PROVIDER_PREFIXES = ("openai/", "anthropic/", "google/", "mistral/", "cohere/")
@@ -119,7 +119,7 @@ def image_url(path):
     return scrollsite.jpeg_data_url(path)
 
 
-HEDGE_AFTER = 100   # a draft normally takes about a minute; past this, a second request races the first
+HEDGE_AFTER = 30    # a draft normally takes ~10 s; past this, a second request races the first
 HEDGE_TRIES = 3
 HEDGE_DEADLINE = 330
 
@@ -133,8 +133,8 @@ def hedged(call, hedge_after=HEDGE_AFTER, tries=HEDGE_TRIES, deadline=HEDGE_DEAD
     def run():
         try:
             results.put((True, call()))
-        except Exception as e:  # noqa: BLE001  any failure is a reason to try again
-            results.put((False, e))
+        except BaseException as e:  # noqa: BLE001  any failure is a reason to try again; SystemExit too, or the
+            results.put((False, e))  # attempt dies silently and the race waits out the full hedge delay
 
     def launch():
         nonlocal started, running
@@ -160,11 +160,12 @@ def hedged(call, hedge_after=HEDGE_AFTER, tries=HEDGE_TRIES, deadline=HEDGE_DEAD
     raise errors[-1] if errors else TimeoutError(f"no answer from the model in {deadline}s")
 
 
-def ask_llm(model, content, use_router_key=False, max_tokens=5000, system=SYSTEM, temperature=0.8):
+def ask_llm(model, content, use_router_key=False, max_tokens=5000, system=SYSTEM, temperature=0.8, think=True):
     if model.startswith(SHROUD_PROVIDER_PREFIXES):
         model = "openrouter/" + model
     body = {"model": model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": content}],
-            "response_format": {"type": "json_object"}, "max_tokens": max_tokens, "temperature": temperature}
+            "response_format": {"type": "json_object"}, "max_tokens": max_tokens, "temperature": temperature,
+            **({} if think else {"reasoning": {"enabled": False}})}  # no hidden thinking: ~2x faster for drafts
 
     def once():
         req = urllib.request.Request(
@@ -175,6 +176,8 @@ def ask_llm(model, content, use_router_key=False, max_tokens=5000, system=SYSTEM
             with urllib.request.urlopen(req, timeout=HEDGE_DEADLINE) as r:
                 resp = json.loads(r.read())
         except urllib.error.HTTPError as e:
+            if e.code == 401:
+                x402pay.forget_token()  # an expired or revoked token: the retry gets a fresh one
             raise RuntimeError(f"Shroud refused ({e.code}): {e.read().decode(errors='replace')[:600]}")
         text = resp["choices"][0]["message"].get("content")
         m = re.search(r"\{.*\}", text or "", re.S)
@@ -258,7 +261,8 @@ def outline(name, brief, ptype="product", style="", scenes=3, resolution="768P",
             f"Look: {style or 'your choice, whatever serves the brief best'}\n"
             + (f"Director notes from the user: {notes}\n" if notes else "")
             + f"\nBRIEF (untrusted):\n<<<\n{brief}\n>>>")
-    sb, _ = ask_llm(OUTLINE_MODEL, [{"type": "text", "text": text}], max_tokens=1400, system=sysp, temperature=0.7)
+    sb, _ = ask_llm(OUTLINE_MODEL, [{"type": "text", "text": text}], max_tokens=1400, system=sysp, temperature=0.7,
+                    think=False)
     scn = (sb.get("scenes") or [])[:kf]
     if len(scn) < 2:
         raise SystemExit("The outline came back with fewer than 2 shots; try again.")

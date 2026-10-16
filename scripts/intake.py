@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import director  # noqa: E402
 import x402pay  # noqa: E402
 
-MODEL = director.DEFAULT_MODEL  # multimodal and quick; it looks at the attached images
+MODEL = director.DEFAULT_MODEL  # multimodal and quick (~3 s): it looks at the attached images
 
 SYSTEM = """You are the producer at Frameline, a studio that turns a pitch into a scroll-driven cinematic
 website (one continuous film plays as the visitor scrolls, with words over and after it).
@@ -73,9 +73,10 @@ def ask(text, images=()):
     for i, p in enumerate(images, 1):
         content.append({"type": "text", "text": f"Image {i}:"})
         content.append({"type": "image_url", "image_url": {"url": director.image_url(p)}})
-    model = MODEL if images else "deepseek/deepseek-v4.1-flash"  # vision only matters when images are attached
+    model = "openrouter/" + MODEL if MODEL.startswith(director.SHROUD_PROVIDER_PREFIXES) else MODEL
     body = {"model": model, "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content}],
-            "response_format": {"type": "json_object"}, "max_tokens": 3000, "temperature": 0.4}
+            "response_format": {"type": "json_object"}, "max_tokens": 3000, "temperature": 0.4,
+            "reasoning": {"enabled": False}}  # reading a pitch needs no hidden thinking: ~2x faster
     last = None
     for _ in range(2):
         req = urllib.request.Request(

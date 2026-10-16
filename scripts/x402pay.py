@@ -16,6 +16,7 @@ import json
 import os
 import secrets
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -39,7 +40,32 @@ class Refused(Exception):
     """A payment our own guardrails will not make."""
 
 
+_TOKEN = {"value": None, "until": 0.0}
+_TOKEN_LOCK = threading.Lock()
+
+
 def agent_token():
+    """The agent's JWT, reused until a minute before it expires. Every model call and memory write needs one;
+    exchanging the key each time cost 1.3-1.6 s per call and tripped 1Claw's rate limit on the exchange."""
+    with _TOKEN_LOCK:
+        if _TOKEN["value"] and time.time() < _TOKEN["until"]:
+            return _TOKEN["value"]
+        tok = _fresh_agent_token()
+        try:
+            exp = json.loads(base64.urlsafe_b64decode(tok.split(".")[1] + "=="))["exp"]
+        except (IndexError, KeyError, ValueError):
+            exp = time.time() + 300
+        _TOKEN.update(value=tok, until=exp - 60)
+        return tok
+
+
+def forget_token():
+    """1Claw refused the cached token (401): the next call exchanges the key again."""
+    with _TOKEN_LOCK:
+        _TOKEN.update(value=None, until=0.0)
+
+
+def _fresh_agent_token():
     """A short-lived JWT for the studio agent; the signing endpoint only accepts agent tokens.
     Sources, in order: ONECLAW_AGENT_ID + ONECLAW_AGENT_API_KEY in the environment (on a 1Claw
     runtime, from a vault-backed variable), the local key file from studio-rotate-key.py, and
