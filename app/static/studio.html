@@ -134,7 +134,7 @@
   <section class="scene" data-scene="deliver" hidden>
     <div class="deliver">
       <div class="deliver-view">
-        <div class="device"><iframe id="result-frame" title="Your site, editable"></iframe></div>
+        <div class="device"><iframe id="result-frame" title="Your site, editable"></iframe><p class="device-lost"><i class="ph ph-film-slate"></i>This film's pictures and film are gone. The words are still here.</p></div>
         <div class="deliver-bar">
           <span class="edit-hint"><i class="ph ph-cursor-text"></i> Click any text in the preview to edit it</span>
           <div class="deliver-actions">
@@ -198,6 +198,10 @@
         <p class="decide-kicker">Your stills are ready</p>
         <p class="decide-body" id="film-body"></p>
         <button class="btn btn-primary btn-block" type="button" id="film-go"></button>
+      </div>
+      <div id="decide-lost" hidden>
+        <p class="decide-kicker">This film's files are gone</p>
+        <p class="decide-body">The studio was updated and could not keep this film's stills and film: they lived on a disk that is replaced on every update. Its storyboard and this conversation are safe.</p>
       </div>
       <p class="decide-note" id="decide-note"></p>
     </section>

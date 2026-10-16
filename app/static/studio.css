@@ -594,3 +594,10 @@ body.has-film .stage-inner { width: min(46%, 560px); margin: 0; }
 @media (prefers-reduced-motion: reduce) {
   .stage-pulse, .spin, .stage::after, .film-img, .film-grain, .film-scan, .film-guides { animation: none; }
 }
+
+/* A delivered film whose files were lost in an update */
+.device-lost { display: none; }
+.deliver.lost .device { display: grid; place-items: center; border: 1px dashed var(--line-2); background: var(--bg-2); }
+.deliver.lost .device iframe, .deliver.lost .deliver-actions, .deliver.lost .moves, .deliver.lost .edit-hint { display: none; }
+.deliver.lost .device-lost { display: grid; justify-items: center; gap: 0.6rem; max-width: 30ch; text-align: center; color: var(--text-2); font-size: 0.95rem; }
+.deliver.lost .device-lost i { font-size: 1.6rem; color: var(--text-3); }

@@ -503,6 +503,7 @@ $("#pay-manual").addEventListener("submit", async (e) => {
 function decision() {
   // Only while the director is listening: never offer a price or a go-ahead for something it is redrawing.
   if (!V.board || V.agent?.mode === "autopilot" || V.agent?.busy || pending) return null;
+  if (V.media_lost) return "lost";
   if (V.phase === "board" && !V.pay?.paid) return "pay";
   if (V.phase === "keyframes" && !V.job?.running) return "film";
   return null;
@@ -516,6 +517,7 @@ function renderDecision() {
   card.hidden = !which;
   $("#decide-pay").hidden = which !== "pay";
   $("#decide-film").hidden = which !== "film";
+  $("#decide-lost").hidden = which !== "lost";
   if (which !== was) {
     if (which) enter(card, { opacity: 0, transform: "translateY(10px)" }, { duration: 500 });
   }
@@ -649,6 +651,8 @@ let saveTimer = null;
 
 function renderDeliver(changed) {
   const b = V.board;
+  // Files lost in an update: no preview of a page that is not there, and nothing to download or refilm.
+  $(".deliver").classList.toggle("lost", Boolean(V.media_lost));
   if (!changed && copy) return;
   copy = structuredClone(b.copy);
   if (!copy.beats) copy.beats = (copy.acts || []).map((a) => a.text);
@@ -659,7 +663,8 @@ function renderDeliver(changed) {
   renderMoves();
   const frame = $("#result-frame");
   frame.onload = wireFrame;
-  frame.src = b.site;
+  if (V.media_lost) frame.removeAttribute("src");
+  else frame.src = b.site;
   $("#save-state").textContent = "";
   voice();
 }
@@ -1318,6 +1323,7 @@ function renderLive() {
 
 function statusLine() {
   const a = V.agent || {};
+  if (V.media_lost) return "This film's files were lost in an update";
   if (pending || a.busy) return "Thinking…";
   if (V.job?.running) return V.phase === "shooting" ? "Shooting your stills" : "Filming your camera moves";
   if (a.waiting === "slot") return "Waiting for the camera";
@@ -1342,7 +1348,7 @@ function sizeChips() {
 
 // One-tap replies that fit where the film is: [label, what gets sent, an exact size change if it is one].
 function suggestions() {
-  if (pending || V.agent?.busy || V.job?.running) return [];
+  if (pending || V.agent?.busy || V.job?.running || V.media_lost) return [];
   const same = (t) => [t, t];
   return {
     board: V.pay?.paid ? [] : sizeChips(),

@@ -337,6 +337,23 @@ def board_view(name):
     }
 
 
+LOST = ("The studio was updated and could not keep this film's pictures and film: they lived on a disk that is "
+        "replaced on every update. Its storyboard and conversation are safe.")
+
+
+def media_lost(s):
+    """A film whose stills or finished film are gone from disk, not rendering, and with no bucket to bring them back."""
+    name = s.get("name")
+    if storage.MEDIA or not name or rendering(s) or not os.path.exists(cfg_path(name)):
+        return False
+    rd = run_dir(name)
+    if s["phase"] == "deliver":
+        return not os.path.exists(os.path.join(rd, "site", "film.mp4"))
+    if s["phase"] == "keyframes":
+        return not (os.path.isdir(rd) and any(scrollsite.keyframe_path(rd, k["id"]) for k in load_cfg(name)["keyframes"]))
+    return False
+
+
 def view(s):
     settle(s)
     out = {k: s.get(k) for k in ("id", "phase", "pitch", "brief", "answers", "controls", "error", "name")}
@@ -355,6 +372,7 @@ def view(s):
     out["payment"] = {k: pay.get(k) for k in ("kind", "address", "usd", "tx")} if pay else None
     a = s.get("agent") or {}
     out["chat"] = [{k: m.get(k) for k in ("who", "text", "at", "tool", "ok", "detail")} for m in (s.get("chat") or [])[-80:]]
+    out["media_lost"] = media_lost(s)
     out["agent"] = {"busy": bool(a.get("busy")), "waiting": a.get("waiting"), "mode": a.get("mode", "chat"),
                     "inspection": a.get("inspection"),
                     "doing": ({**a["doing"], "for_s": round(time.time() - a["doing"]["since"])} if a.get("doing") else None)}
@@ -779,6 +797,8 @@ def film_state(s):
             st["site_ready"] = True
     if a.get("inspection"):
         st["your_inspection"] = a["inspection"]
+    if media_lost(s):
+        st["files_lost"] = LOST + " Tell the customer plainly if they ask; do not claim the site or stills are ready."
     if (s.get("payment") or {}).get("locked"):
         st["paid_for"] = s["payment"]["locked"]
     return st
@@ -1235,6 +1255,8 @@ def order_view(s, base):
                              "page": out["page"], "edit": out["edit"]}
     if s.get("error") and not done:
         out["error"] = s["error"]
+    if media_lost(s):
+        out["state"], out["error"] = "needs_attention", LOST
     return out
 
 
@@ -1277,7 +1299,10 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "Frameline/0.2"
 
     def log_message(self, fmt, *args):
-        if "/api/" in (args[0] if args else "") and "/api/events" not in (args[0] if args else ""):
+        # Request lines arrive as a string; send_error logs ("code %d, message %s", 404, ...), whose first
+        # argument is a number. Testing that with `in` used to crash every 404 into a 500.
+        line = args[0] if args and isinstance(args[0], str) else ""
+        if not line or ("/api/" in line and "/api/events" not in line):
             sys.stderr.write("%s\n" % (fmt % args))
 
     def send_json(self, obj, status_code=200, headers=None):
