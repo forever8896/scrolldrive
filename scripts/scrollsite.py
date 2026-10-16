@@ -279,6 +279,12 @@ def clips(cfg, state, run_dir, budget, frames):
             state.spend(price)
         pending[(a, b)] = (key, path, stamp)
     deadline = time.time() + 15 * 60
+    # Every check signs a fresh Venice login with the agent's 1Claw key, and 1Claw counts each signature
+    # against the agent's daily transaction cap. A move takes 15-50 s, so the first look waits 30 s and the
+    # rest come every 12 s: about half the signatures of checking every 10 s from the start.
+    if pending:
+        log(f"  clip {', '.join(f'{a}->{b}' for a, b in pending)}: queued; first check in 30s (free)")
+        time.sleep(30)
     while pending:
         for (a, b), (key, path, stamp) in list(pending.items()):
             status, video = venice.video_retrieve(model, state.get(key)["queue_id"])
@@ -291,8 +297,8 @@ def clips(cfg, state, run_dir, budget, frames):
             break
         if time.time() > deadline:
             raise RuntimeError(f"{len(pending)} move(s) still rendering after 15 min; re-run to keep checking")
-        log(f"  clip {', '.join(f'{a}->{b}' for a, b in pending)}: {status}; checking again in 10s (free)")
-        time.sleep(10)
+        log(f"  clip {', '.join(f'{a}->{b}' for a, b in pending)}: {status}; checking again in 12s (free)")
+        time.sleep(12)
     return out
 
 
